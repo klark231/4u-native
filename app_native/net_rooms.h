@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "mh4n/hub.h"
 #include "mh4n/rooms.h"
 
 // Something the room said, or this phone did in it, for the chat and the notices over the game
@@ -54,3 +55,16 @@ struct NetLobby {
 };
 void net_lobby_fetch(const std::string& url);
 NetLobby net_lobby();
+
+// ---- hub servers (mh4n/hub.h): the same local play through an MHGURecomp hub server instead of a room. Set in
+// mh4u-app.ini's [Network] (HubServers, HubKey, HubFamily: auto, 4U or 4G), and used by the Multiplayer tab's "Hub
+// servers" section. Only players of the same game family (and matchmaking key) see each other's hubs.
+// Starts using the servers the settings name (a room joined or hosted is left): the answer comes as the client's state.
+bool net_hub_join(std::string* error);
+// Asks each server (on a thread of its own) whether it answers, and how many hubs of this game it lists
+struct NetHubCheck {
+    bool busy = false, done = false;
+    std::vector<mh4n::hub::ServerCheck> servers;
+};
+void net_hub_check();
+NetHubCheck net_hub_checked();

@@ -144,6 +144,44 @@ struct WifiPacket {
     u8 channel = 0;
 };
 
+// ---- hub servers --------------------------------------------------------------------------------------------------
+
+/// The other way to play together: an MHGURecomp hub server (mh4n/hub.h) instead of a room. The game's local-wireless
+/// service cannot tell: it sends and takes the same frames. Hubs are listed per game family: MH4U (USA, EUR) players see
+/// only each other's hubs, MH4G (JPN, KOR) players only each other's, and MHGU's and MHXX's are never shown.
+struct HubRequest {
+    std::string servers;          ///< "name" or "name:port", separated by spaces; empty: the default servers
+    std::string key;              ///< the matchmaking key: only players with the same key see each other's hubs
+    std::string family = "auto";  ///< "auto" (the running game's), "4u" or "4g"
+    std::string console_id_hash;  ///< empty: the running game's (PublishConsole)
+};
+
+struct HubServerStatus {
+    std::string server;
+    bool listed = false;   ///< its last answer to a search arrived
+    bool hosting = false;  ///< this console's hub is listed on it
+    std::string problem;
+};
+
+struct HubListed {
+    std::string server;
+    MacAddress mac{};
+    u8 nodes = 0;
+    u8 max_nodes = 0;
+};
+
+struct HubStatus {
+    bool active = false;     ///< hub servers are in use (this client is Joining or Joined by them)
+    std::string family;      ///< "MH4U" or "MH4G"
+    bool hosting = false;    ///< the game hosts a network: it is listed
+    bool joining = false;
+    bool linked = false;     ///< this console plays on another's hub
+    int players = 0;         ///< the consoles that joined this console's hub
+    std::vector<HubServerStatus> servers;
+    std::vector<HubListed> hubs;  ///< what a search finds now
+    std::string problem;     ///< a sentence for the player: why nothing works, or what failed last
+};
+
 // ---- the room client --------------------------------------------------------------------------------------------
 
 enum class State : u8 {
@@ -243,6 +281,11 @@ public:
     /// Starts joining (and leaves a room the client is in first). False, with `*error` set (if given), only for a
     /// request that cannot work: an invalid nickname or an empty host. The answer comes as the state.
     bool Join(const JoinRequest& request, std::string* error = nullptr);
+    /// Starts using hub servers instead of a room (and leaves the room or hubs it was in). Like Join it returns at once
+    /// and waits for the game's console ID; the state follows (Joining, then Joined). False, with `*error`, for a request
+    /// that cannot work (no server, a family that does not exist).
+    bool JoinHubs(const HubRequest& request, std::string* error = nullptr);
+    HubStatus GetHubStatus() const;
     /// Leaves the room (a Join that waits is cancelled). Returns at once; the goodbye to the room finishes on that
     /// join's network thread (at most 5 s), while a following Join starts on a thread of its own.
     void Leave();
@@ -296,6 +339,8 @@ bool WaitJoined(int timeout_ms);
 Status GetStatus();
 std::vector<Event> TakeEvents();
 bool SendChat(const std::string& message);
+bool JoinHubs(const HubRequest& request, std::string* error = nullptr);
+HubStatus GetHubStatus();
 
 /// Azahar's GetConsoleIdHash: the lowercase hex SHA-256 of the console's unique ID (8 bytes, little-endian).
 std::string ConsoleIdHash(u64 console_unique_id);

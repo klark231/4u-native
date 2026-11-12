@@ -1,6 +1,7 @@
 // The app's side of the network rooms (net_rooms.h).
 #include "net_rooms.h"
 
+#include "app_settings.h"
 #include "net_lan.h"
 
 #include <SDL3/SDL.h>
@@ -244,4 +245,61 @@ NetLobby net_lobby() {
     LobbyState& state = lobby_state();
     std::lock_guard lock(state.mutex);
     return state.lobby;
+}
+
+// ---- hub servers
+namespace {
+struct HubCheckState {
+    std::mutex mutex;
+    NetHubCheck check;
+};
+HubCheckState& hub_check_state() {
+    static HubCheckState* state = new HubCheckState;  // (never freed: its thread may outlive the app's end)
+    return *state;
+}
+mh4n::hub::Family hub_check_family() {
+    const auto choice = mh4n::hub::ParseFamilyChoice(app_setting("Network", "HubFamily", "auto"));
+    if (choice == mh4n::hub::FamilyChoice::Mh4g) return mh4n::hub::Family::Mh4g;
+    return mh4n::hub::Family::Mh4u;  // (auto: the game is not running here: MH4U's USA and EUR are what this app plays)
+}
+}  // namespace
+
+bool net_hub_join(std::string* error) {
+    rooms::HubRequest request;
+    request.servers = app_setting("Network", "HubServers", "");
+    request.key = app_setting("Network", "HubKey", "");
+    request.family = app_setting("Network", "HubFamily", "auto");
+    if (request.family.empty()) request.family = "auto";
+    if (!rooms::JoinHubs(request, error)) {
+        std::fprintf(stderr, "[Info] App: hub servers: %s\n", error ? error->c_str() : "refused");
+        return false;
+    }
+    std::fprintf(stderr, "[Info] App: hub servers: in use\n");
+    return true;
+}
+
+void net_hub_check() {
+    HubCheckState& state = hub_check_state();
+    {
+        std::lock_guard lock(state.mutex);
+        if (state.check.busy) return;
+        state.check.busy = true;
+        state.check.done = false;
+    }
+    const std::vector<mh4n::hub::Endpoint> servers = mh4n::hub::ParseServers(app_setting("Network", "HubServers", ""));
+    const std::string key = app_setting("Network", "HubKey", "");
+    const mh4n::hub::Family family = hub_check_family();
+    std::thread([servers, key, family, &state] {
+        std::vector<mh4n::hub::ServerCheck> out = mh4n::hub::CheckServers(servers, family, key, 5000);
+        std::lock_guard lock(state.mutex);
+        state.check.servers = std::move(out);
+        state.check.busy = false;
+        state.check.done = true;
+    }).detach();
+}
+
+NetHubCheck net_hub_checked() {
+    HubCheckState& state = hub_check_state();
+    std::lock_guard lock(state.mutex);
+    return state.check;
 }

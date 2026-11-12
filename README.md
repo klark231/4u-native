@@ -299,6 +299,12 @@ Join the room before going to the Gathering Hall. The room's chat is on the same
 **×** beside one takes it out. The first time you play online a notice says which server the app connects to: like any
 server on the internet, it sees your IP address.
 
+### Hub servers (instead of a room)
+
+Gear, **Multiplayer**, **Hub servers**, **Use hub servers** plays through an MHGU hub server, which some find steadier than a
+room. Everyone in the group uses the same servers, game and key; only MH4U (USA, EUR) and MH4G (JPN, KOR) players see these
+hubs, never MHGU's or MHXX's. By default it uses the two public servers MHGU uses. How it works: [docs/hub-link.md](docs/hub-link.md).
+
 ## Samsung: Game Booster
 
 Samsung's performance panel only shows for apps it recognizes as games, and an APK installed by hand doesn't count. To get

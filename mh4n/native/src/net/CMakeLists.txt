@@ -3,6 +3,8 @@
 add_subdirectory("${MH4N_ROOT}/third_party/enet" "${CMAKE_CURRENT_BINARY_DIR}/enet")
 mh4n_module(
     SOURCES
+        hub.cpp
+        hub_medium.cpp
         lobby.cpp
         packet.cpp
         room_client.cpp

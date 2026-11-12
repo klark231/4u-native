@@ -1,0 +1,73 @@
+name: Build APK
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Tools (CMake, Ninja, NDK 27.0.12077973)
+        run: |
+          pip install cmake ninja
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" "ndk;27.0.12077973" >/dev/null
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: build/sdl3
+          key: sdl3-3.4.18-${{ hashFiles('scripts/build_sdl3.sh') }}
+      - name: Signing key (only if the secrets exist)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > android/mh4u.keystore
+            printf 'storePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+              "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > android/keystore.properties
+            echo "Signing with the release key"
+          else
+            echo "No signing secrets: debug APK"
+          fi
+      - name: Build SDL3
+        run: sh scripts/build_sdl3.sh
+      - name: Build APK
+        run: sh scripts/build_apk.sh
+      - name: Name the APK
+        id: apk
+        run: |
+          V=$(cat VERSION)
+          if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
+            cp android/app/build/outputs/apk/release/app-release.apk "MH4U-$V.apk"
+          else
+            cp android/app/build/outputs/apk/debug/app-debug.apk "MH4U-$V-debug.apk"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: MH4U-*.apk
+      - name: Release (on tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" MH4U-*.apk \
+            --title "MH4U ${{ steps.apk.outputs.version }}" \
+            --generate-notes --verify-tag

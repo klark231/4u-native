@@ -32,6 +32,8 @@
 #include <enet/enet.h>
 
 #include "../services/cfg/sha256.h"
+#include "hub_medium.h"
+#include "mh4n/hub.h"
 #include "mh4n/log.h"
 #include "mh4n/rooms.h"
 #include "net_internal.h"
@@ -106,6 +108,13 @@ struct Client::Impl {
     std::map<u64, WifiListener> listeners;
     std::atomic<u64> next_listener{1};
 
+    // hub servers instead of a room (JoinHubs): the medium carries the game's frames, and there is no session
+    std::unique_ptr<hub::Medium> medium;
+    std::optional<HubRequest> pending_hub;  // waiting for the game's console ID
+    std::string hub_family;                 // the family in use ("MH4U" / "MH4G")
+    std::string hub_problem;                // why hub servers cannot be used (a sentence)
+    bool hub_mode = false;                  // JoinHubs was asked: Joining, Joined, or not startable
+
     // ---- state, under `mutex` ----
     bool Current(const Session& s) const { return session != nullptr && session->id == s.id; }
     void Touch() {
@@ -165,6 +174,7 @@ struct Client::Impl {
     void Invoke(const WifiPacket& packet);
 
     void StartSession(std::unique_lock<std::mutex>& lock, std::shared_ptr<Session> s);
+    void StartHub(const HubRequest& request, const std::string& console_id_hash);  // under `mutex`
     void Queue(const std::shared_ptr<Session>& s, Packet&& packet) {
         std::lock_guard send_lock(s->send_mutex);
         s->send_list.push_back(std::move(packet));
@@ -517,6 +527,112 @@ void Client::Impl::StartSession(std::unique_lock<std::mutex>& lock, std::shared_
 
 Client::Client() : impl_(new Impl) {}
 
+// A console's MAC address on the hub medium: from its console ID, so it is the same every time (a locally administered
+// unicast address: bit 1 of the first byte set, bit 0 clear).
+static MacAddress HubMac(const std::string& console_id_hash) {
+    const std::string text = console_id_hash + "|mh4u-hub-mac";
+    const std::array<u8, 32> hash = cfg::Sha256(reinterpret_cast<const u8*>(text.data()), text.size());
+    MacAddress mac{};
+    std::copy_n(hash.begin(), 6, mac.begin());
+    mac[0] = static_cast<u8>((mac[0] | 0x02) & 0xFE);
+    return mac;
+}
+
+void Client::Impl::StartHub(const HubRequest& request, const std::string& console_id_hash) {
+    hub::Family family = hub::Family::Mh4u;
+    const auto choice = hub::ParseFamilyChoice(request.family).value_or(hub::FamilyChoice::Auto);
+    if (choice == hub::FamilyChoice::Auto) {
+        const auto found = hub::FamilyOfProgram(game.id);
+        if (!found) {
+            hub_problem = "This game cannot use hub servers: only MH4U and MH4G can. Set the family by hand if this is MH4G.";
+            MH4N_LOG(Warning, kLog, "hub servers: program {:016X} has no family", game.id);
+            Fail(Error::UnknownError);
+            SetState(State::Idle);
+            hub_mode = false;
+            return;
+        }
+        family = *found;
+    } else {
+        family = choice == hub::FamilyChoice::Mh4g ? hub::Family::Mh4g : hub::Family::Mh4u;
+    }
+    hub::MediumOptions options;
+    options.family = family;
+    options.servers = hub::ParseServers(request.servers);
+    options.key = request.key;
+    options.mac = HubMac(console_id_hash);
+    hub_family = hub::FamilyName(family);
+    hub_problem.clear();
+    mac = options.mac;
+    medium = std::make_unique<hub::Medium>(std::move(options), [this](const WifiPacket& packet) { Invoke(packet); });
+    MH4N_LOG(Info, kLog, "using hub servers as {} ({})", hub_family, hub::FormatServers(hub::ParseServers(request.servers)));
+    SetState(State::Joined);
+}
+
+bool Client::JoinHubs(const HubRequest& request, std::string* error) {
+    if (hub::ParseServers(request.servers).empty()) {
+        if (error != nullptr) {
+            *error = "No hub server.";
+        }
+        return false;
+    }
+    if (!hub::ParseFamilyChoice(request.family)) {
+        if (error != nullptr) {
+            *error = "The game family must be auto, 4U or 4G.";
+        }
+        return false;
+    }
+    Leave();
+    std::unique_lock lock(impl_->mutex);
+    impl_->ReapLeaving();
+    impl_->hub_mode = true;
+    impl_->hub_problem.clear();
+    impl_->host = hub::FormatServers(hub::ParseServers(request.servers));
+    impl_->port = 0;
+    impl_->error = Error::None;
+    impl_->ClearRoom();
+    impl_->room.name = "Hub servers";
+    impl_->SetState(State::Joining);
+    std::string console = request.console_id_hash;
+    if (console.empty()) {
+        console = impl_->published_console;
+    }
+    if (console.empty()) {
+        impl_->pending_hub = request;  // (the game's console ID: PublishConsole)
+        impl_->waiting_for_console = true;
+        impl_->Touch();
+        MH4N_LOG(Info, kLog, "using hub servers when the game starts");
+        return true;
+    }
+    impl_->StartHub(request, console);
+    return true;
+}
+
+HubStatus Client::GetHubStatus() const {
+    std::lock_guard lock(impl_->mutex);
+    HubStatus out;
+    out.problem = impl_->hub_problem;
+    out.active = impl_->hub_mode && impl_->state != State::Idle;
+    if (impl_->medium == nullptr) {
+        return out;
+    }
+    out.family = impl_->hub_family;
+    const hub::MediumStatus st = impl_->medium->Status();
+    out.hosting = st.hosting;
+    out.joining = st.joining;
+    out.linked = st.linked;
+    out.players = st.players;
+    for (const auto& sv : st.servers) {
+        out.servers.push_back({sv.server.Text(), sv.listed, sv.hosting, sv.problem});
+    }
+    for (const auto& h : st.hubs) {
+        out.hubs.push_back({h.server.Text(), h.mac, h.nodes, h.max_nodes});
+    }
+    if (out.problem.empty()) {
+        out.problem = st.problem;
+    }
+    return out;
+}
+
 Client::~Client() {
     Leave();
     std::vector<std::shared_ptr<Session>> all;
@@ -576,7 +692,11 @@ bool Client::Join(const JoinRequest& request, std::string* error) {
 }
 
 void Client::Leave() {
+    std::unique_ptr<hub::Medium> medium;  // (destroyed after the lock is let go)
     std::lock_guard lock(impl_->mutex);
+    medium = std::move(impl_->medium);
+    impl_->pending_hub.reset();
+    impl_->hub_mode = false;
     impl_->pending.reset();
     impl_->waiting_for_console = false;
     if (impl_->session != nullptr) {
@@ -695,6 +815,14 @@ bool Client::RequestBanList() {
 void Client::PublishConsole(const std::string& console_id_hash) {
     std::unique_lock lock(impl_->mutex);
     impl_->published_console = console_id_hash;
+    if (impl_->pending_hub && !console_id_hash.empty()) {
+        const HubRequest request = *impl_->pending_hub;
+        impl_->pending_hub.reset();
+        impl_->waiting_for_console = false;
+        impl_->StartHub(request, console_id_hash);
+        impl_->Touch();
+        return;
+    }
     if (impl_->pending != nullptr && !console_id_hash.empty()) {
         auto s = std::move(impl_->pending);
         impl_->pending.reset();
@@ -724,6 +852,13 @@ void Client::RemoveWifiListener(u64 id) {
 
 bool Client::SendWifi(WifiPacket wifi) {
     std::lock_guard lock(impl_->mutex);
+    if (impl_->medium != nullptr) {
+        if (impl_->state != State::Joined) {
+            return false;
+        }
+        impl_->medium->Send(wifi);  // (returns at once: the medium's threads do the work)
+        return true;
+    }
     const auto s = impl_->JoinedSession();
     if (s == nullptr) {
         return false;
@@ -781,6 +916,14 @@ std::vector<Event> TakeEvents() {
 
 bool SendChat(const std::string& message) {
     return Default().SendChat(message);
+}
+
+bool JoinHubs(const HubRequest& request, std::string* error) {
+    return Default().JoinHubs(request, error);
+}
+
+HubStatus GetHubStatus() {
+    return Default().GetHubStatus();
 }
 
 std::string ConsoleIdHash(u64 console_unique_id) {

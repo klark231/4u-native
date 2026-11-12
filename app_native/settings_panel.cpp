@@ -1279,6 +1279,9 @@ ImU32 status_ink(const rooms::Status& st) {
     return st.error != rooms::Error::None ? theme().warn : touch_look().dim;
 }
 std::string status_help(const rooms::Status& st) {
+    if (in_room(st) && st.port == 0)  // (hub servers: no address, no hunters to list)
+        return say("Hub servers are in use. The game's Local Play now finds the hubs the servers list: one creates a Gathering Hall and the others find it.",
+                   "Se usan servidores de hubs. El juego local (Local Play) ya encuentra los hubs de los servidores: uno crea un Gathering Hall y los demás lo buscan.");
     if (in_room(st)) {
         std::string at = st.host + ":" + std::to_string(st.port);
         if (st.hosting) {  // (this phone's room: where the others find it, not the loopback)
@@ -1553,6 +1556,121 @@ void lobby_row(std::vector<Row>& rows) {
     rows.push_back(std::move(r));
 }
 
+// ---------------------------------------------------------------- hub servers (net_rooms.h, mh4n/hub.h)
+// The same local play through an MHGURecomp hub server, for those who find a hub server steadier than a room. The settings
+// are written to mh4u-app.ini as they are typed (they are not part of the draft: nothing to Save). Only MH4U players (USA,
+// EUR) see each other's hubs, and MH4G players (JPN, KOR) each other's: MHGU's and MHXX's are never listed here.
+const char* const HUB_FAMILIES[] = {"auto", "4U", "4G"};
+int hub_family_index() {
+    const std::string v = app_setting("Network", "HubFamily", "auto");
+    for (int i = 1; i < 3; i++)
+        if (!strcasecmp(v.c_str(), HUB_FAMILIES[i])) return i;
+    return 0;
+}
+void hub_rows(std::vector<Row>& r) {
+    const rooms::HubStatus hs = rooms::GetHubStatus();
+    header(r, "net.hub.head", tr("Hub servers"));
+    note(r, "net.hub.what",
+         say("Local play through an MHGU hub server instead of a room. Everyone who plays together uses the same servers, the same game and the same key. Only MH4U (USA, EUR) and MH4G (JPN, KOR) players see these hubs.",
+             "Juego local por un servidor de hubs de MHGU en vez de una sala. Quienes juegan juntos usan los mismos servidores, el mismo juego y la misma clave. Solo los jugadores de MH4U (USA, EUR) y MH4G (JPN, KOR) ven estos hubs."),
+         touch_look().dim);
+    if (hs.active) {
+        action(r, "net.hub.use", tr("Stop using hub servers"), []() { net_leave(); }, true, "HubStop");
+        r.back().value = hs.family.empty() ? std::string() : hs.family;
+        r.back().ink = NET_GREEN;
+    } else {
+        action(r, "net.hub.use", tr("Use hub servers"), []() {
+            std::string error;
+            if (!net_hub_join(&error)) s.error = error;
+        }, true, "HubUse");
+    }
+    const std::string servers = app_setting("Network", "HubServers", "");
+    Row row;
+    row.id = "net.hub.servers", row.title = tr("Hub servers"), row.key = "HubServers";
+    row.value = servers.empty() ? std::string(tr("MHGU's public servers")) : servers;
+    row.arrow = true;
+    row.activate = [servers]() {
+        open_keyboard(tr("Hub servers"), servers, KB_ANY, 200,
+                      tr("Names or IPs, with :port if it is not 39510, separated by spaces. Empty: MHGU's public servers."),
+                      [](const std::string& typed, std::string& error) {
+                          if (!typed.empty() && mh4n::hub::ParseServers(typed).empty()) {
+                              error = tr("None of those is a server's name or address.");
+                              return false;
+                          }
+                          app_setting_set("Network", "HubServers", typed);
+                          return true;
+                      });
+    };
+    r.push_back(std::move(row));
+    const std::string key = app_setting("Network", "HubKey", "");
+    Row krow;
+    krow.id = "net.hub.key", krow.title = tr("Matchmaking key"), krow.key = "HubKey";
+    krow.value = key.empty() ? std::string(tr("No key (public)")) : "\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2";
+    krow.arrow = true;
+    krow.activate = [key]() {
+        open_keyboard(tr("Matchmaking key"), key, KB_SECRET, 64, tr("Only players with the same key see your hubs. Empty: public."),
+                      [](const std::string& typed, std::string&) {
+                          app_setting_set("Network", "HubKey", typed);
+                          return true;
+                      });
+    };
+    r.push_back(std::move(krow));
+    Row frow;
+    frow.id = "net.hub.family", frow.title = tr("Game"), frow.key = "HubFamily";
+    const int fam = hub_family_index();
+    frow.value = fam == 0 ? std::string(tr("The running game")) : fam == 1 ? "MH4U (USA, EUR)" : "MH4G (JPN, KOR)";
+    frow.help = say("Which game's hubs to list. The running game is the default: MH4G's Korean copy is not recognized yet, so choose MH4G by hand for it.",
+                    "De qué juego se listan los hubs. Por defecto, el del juego en marcha: la copia coreana de MH4G aún no se reconoce, elige MH4G a mano para ella.");
+    frow.menu = true;
+    Row fcopy = frow;
+    frow.activate = [fcopy, fam]() {
+        choices(fcopy, {tr("The running game"), "MH4U (USA, EUR)", "MH4G (JPN, KOR)"}, fam,
+                [](int v) { app_setting_set("Network", "HubFamily", HUB_FAMILIES[std::clamp(v, 0, 2)]); });
+    };
+    r.push_back(std::move(frow));
+    const NetHubCheck check = net_hub_checked();
+    action(r, "net.hub.check", tr("Check hub servers"), []() { net_hub_check(); }, !check.busy, "HubCheck");
+    r.back().value = check.busy ? std::string(tr("Asking...")) : std::string();
+    if (check.busy) r.back().ink = touch_look().glow;
+    if (check.done) {
+        for (size_t i = 0; i < check.servers.size(); i++) {
+            const mh4n::hub::ServerCheck& c = check.servers[i];
+            note(r, "net.hub.check." + std::to_string(i),
+                 c.ok ? fmt(say("%s answered in %d ms: %d hub(s) for this game.", "%s respondió en %d ms: %d hub(s) de este juego."), c.server.Text().c_str(), c.ms, c.hubs)
+                      : fmt(say("%s: %s.", "%s: %s."), c.server.Text().c_str(), c.detail.c_str()),
+                 c.ok ? NET_GREEN : theme().warn);
+        }
+    }
+    if (hs.active) {
+        if (!hs.problem.empty()) note(r, "net.hub.why", hs.problem, theme().warn);
+        if (hs.hosting)
+            note(r, "net.hub.hosting", fmt(say("Your hub is listed. Players on it: %d.", "Tu hub está en la lista. Jugadores en él: %d."), hs.players), NET_GREEN);
+        else if (hs.linked)
+            note(r, "net.hub.linked", say("You are playing on another hunter's hub.", "Estás jugando en el hub de otro cazador."), NET_GREEN);
+        for (size_t i = 0; i < hs.servers.size(); i++) {
+            const rooms::HubServerStatus& sv = hs.servers[i];
+            Row row2;
+            row2.id = "net.hub.server." + std::to_string(i), row2.title = sv.server;
+            row2.value = !sv.problem.empty() ? std::string(tr("No answer")) : sv.hosting ? std::string(tr("Hub listed")) : sv.listed ? std::string(tr("Answers")) : std::string(tr("Asking..."));
+            row2.ink = !sv.problem.empty() ? theme().warn : sv.listed || sv.hosting ? NET_GREEN : touch_look().dim;
+            row2.help = sv.problem;
+            r.push_back(std::move(row2));
+        }
+        if (hs.hubs.empty() && !hs.hosting && !hs.linked)
+            note(r, "net.hub.none", say("No hub found yet. In the game, create a Gathering Hall on one phone and search on the other.",
+                                         "Aún no hay hubs. En el juego, crea un Gathering Hall en un teléfono y busca en el otro."),
+                 touch_look().dim);
+        for (size_t i = 0; i < hs.hubs.size(); i++) {
+            const rooms::HubListed& h = hs.hubs[i];
+            Row row3;
+            row3.id = "net.hub.found." + std::to_string(i), row3.title = fmt(say("Hub %d", "Hub %d"), (int)i + 1);
+            row3.value = fmt("%d / %d", (int)h.nodes, (int)h.max_nodes);
+            row3.help = say("Found on ", "Encontrado en ") + h.server + say(". Join it from the game's Local Play.", ". Entra desde el juego local (Local Play).");
+            r.push_back(std::move(row3));
+        }
+    }
+}
+
 void network_rows(std::vector<Row>& r) {
     Draft& c = s.draft;
     const rooms::Status st = rooms::GetStatus();
@@ -1643,6 +1761,7 @@ void network_rows(std::vector<Row>& r) {
         }
     }
     add_bool(r, "net.notices", "Room messages over the game", &c.notices, "Notices");
+    hub_rows(r);
     header(r, "net.lobby.head", tr("Public rooms"));
     lobby_row(r);
     const std::string url = lobby_url(c.lobby);
@@ -2904,6 +3023,11 @@ const Help HELP[] = {
      "El lobby que lista las salas públicas (la API web de Azahar): un toque en una sala entra. El predeterminado, http://88.198.47.46:5000, es donde la mayoría de los jugadores del juego listan sus salas; lo mantienen jugadores, no este proyecto. Otro: escribe otro, como http://nombre:puerto. Ninguno: sin lista (las salas por dirección y en esta Wi-Fi siguen funcionando). Los lobbies que escribes y guardas quedan en esta lista, el último primero (hasta 24): la × a su lado lo quita (con un mando, el botón que guarda)."},
     {"LanSearch", "Looks for rooms hosted by phones on the same Wi-Fi as this one (Host a room, on the other phone), so there is no address to type. It takes a second and a half. A tap on a room found joins it.",
      "Busca salas creadas por teléfonos en la misma Wi-Fi que este (Crear una sala, en el otro teléfono), así no hay que escribir ninguna dirección. Tarda un segundo y medio. Un toque en una sala encontrada entra."},
+    {"HubUse", "Uses the hub servers below instead of a room: the game's Local Play then finds the hubs they list. Do it before going to the Gathering Hall.", "Usa los servidores de hubs de abajo en vez de una sala: el juego local (Local Play) encuentra entonces los hubs que listan. Hazlo antes de ir al Gathering Hall."},
+    {"HubStop", "Stops using the hub servers (your hub, if you made one, closes).", "Deja de usar los servidores de hubs (tu hub, si creaste uno, se cierra)."},
+    {"HubServers", "The hub servers, by name or IP (and :port if it is not 39510), separated by spaces. Everyone who plays together must use the same ones. Empty: MHGU's public servers. A hub you make is listed on all of them.", "Los servidores de hubs, por nombre o IP (y :puerto si no es 39510), separados por espacios. Quienes juegan juntos deben usar los mismos. Vacío: los servidores públicos de MHGU. Un hub que creas se lista en todos."},
+    {"HubKey", "A word your group agrees on: only players with the same key see each other's hubs. Empty: your hubs are public to everyone without a key. The server gets a hash of it, never the key.", "Una palabra que acuerda tu grupo: solo los jugadores con la misma clave ven los hubs de los demás. Vacía: tus hubs son públicos para todos sin clave. El servidor recibe un hash, nunca la clave."},
+    {"HubCheck", "Asks each hub server whether it answers, how fast, and how many hubs of this game it lists.", "Le pregunta a cada servidor de hubs si responde, qué tan rápido, y cuántos hubs de este juego lista."},
     {"Refresh", "Asks the lobby above for its rooms again (the tab asks it by itself as it opens). A tap on one joins it.", "Le vuelve a pedir sus salas al lobby de arriba (la pestaña se las pide sola al abrirse). Un toque en una entra."},
     {"Language", "The language of this menu. Phone's: the one your phone uses.", "El idioma de este menú. Del teléfono: el que usa tu teléfono."},
     {"Theme", "The colours of this menu.", "Los colores de este menú."},
