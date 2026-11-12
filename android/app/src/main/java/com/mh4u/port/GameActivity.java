@@ -268,6 +268,12 @@ public class GameActivity extends SDLActivity {
     }
     private static android.net.wifi.WifiManager.MulticastLock lanLock;
 
+    /** Ajustes -> Carpeta del usuario (UserFolderActivity: the change is applied at the next start). */
+    public static void showUserFolder() {
+        SDLActivity activity = mSingleton;
+        if (activity != null) activity.startActivity(new Intent(activity, UserFolderActivity.class));
+    }
+
     /** Ajustes -> Carpeta del juego. */
     public static void showGameFolder() {
         SDLActivity activity = mSingleton;

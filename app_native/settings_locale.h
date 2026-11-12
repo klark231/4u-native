@@ -414,6 +414,7 @@ static inline const char* settings_text(int language, const char* english) {
         {"Import save", "Importar partida"},
         {"Export save", "Exportar partida"},
         {"Game folder", "Carpeta del juego"},
+        {"User folder", "Carpeta del usuario"},
         {"Save folder", "Carpeta de partidas"},
         {"Check for updates", "Buscar actualizaciones"},
         {"Pause in this menu", "Pausar en este menú"},

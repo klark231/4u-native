@@ -4,7 +4,8 @@
 // renderer draws them into (shared_screens.cpp, no copy through the CPU) where the device can, else as pixels.
 //
 // The Java side (GameActivity) writes launch.txt in the app's external files folder (the private one when another app
-// made that one and the app can't write it: AppHome.java decides, home.txt in the internal folder says so):
+// made that one and the app can't write it: AppHome.java decides, home.txt in the internal folder says so; or the folder
+// the player chose, Settings -> User folder: user_folder.txt there, UserFolder.java):
 //   game=<the game folder: exheader.bin, code.bin, romfs.bin, update_romfs.bin, icon.bin>
 //   code=<the game's code library, built on the player's PC>
 //   user=<the user folder: saves, extdata, mh4u.ini>
@@ -426,6 +427,16 @@ int main(int argc, char* argv[]) {
     std::string ext = SDL_GetAndroidExternalStoragePath() ? SDL_GetAndroidExternalStoragePath() : internal;
     // (the private folder instead when another app made the external one: AppHome.java, MHGU's gu-native #176)
     if (const std::string moved = FirstLine(internal + "/home.txt"); !moved.empty()) ext = moved;
+    // (the player's own choice, Settings -> User folder: UserFolder.java keeps it in user_folder.txt. It has to exist and be
+    // writable, or the folder above is used, as AppHome.home() does on the Java side)
+    if (const std::string mine = FirstLine(internal + "/user_folder.txt"); !mine.empty()) {
+        struct stat st{};
+        if (stat(mine.c_str(), &st) == 0 && S_ISDIR(st.st_mode) && access(mine.c_str(), W_OK) == 0) {
+            ext = mine;
+        } else {
+            std::fprintf(stderr, "[Info] user folder %s can't be used: %s is\n", mine.c_str(), ext.c_str());
+        }
+    }
     // the runtime logs to stderr: into log.txt in the app's external folder (Share log reads it there)
     if (!ext.empty()) {
         std::freopen((ext + "/log.txt").c_str(), "w", stderr);

@@ -164,6 +164,21 @@ public class GameFolderActivity extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         declareGame();
+        // the user folder first (UserFolder: where the settings, saves and mods live): a change chosen last time is applied
+        // now (files copied), and the very first start asks where they should live (once); a folder that went missing is
+        // asked about again. Not when this screen is opened from the game's settings (EXTRA_CHANGE)
+        if (!getIntent().getBooleanExtra(EXTRA_CHANGE, false)) {
+            if (UserFolder.hasPending(this)) {
+                startActivity(new Intent(this, UserFolderActivity.class).putExtra(UserFolderActivity.EXTRA_APPLY, true));
+                finish();
+                return;
+            }
+            if (!UserFolder.asked(this) || UserFolder.lost(this)) {
+                startActivity(new Intent(this, UserFolderActivity.class).putExtra(UserFolderActivity.EXTRA_FIRST, true));
+                finish();
+                return;
+            }
+        }
         es = "es".equals(Locale.getDefault().getLanguage());
         dump = new Dump(es);
         change = getIntent().getBooleanExtra(EXTRA_CHANGE, false);

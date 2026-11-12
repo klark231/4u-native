@@ -68,6 +68,13 @@
             </intent-filter>
         </activity>
 
+        <!-- Settings -> User folder; also the first time and when a change is applied (UserFolder) -->
+        <activity android:name=".UserFolderActivity"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:screenOrientation="sensorLandscape"
+            android:excludeFromRecents="true"
+            android:exported="false" />
+
         <!-- Share the log: in a process of its own, alive when the game's has closed because of an error -->
         <activity android:name=".LogShareActivity"
             android:process=":share"

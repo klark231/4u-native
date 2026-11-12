@@ -2550,6 +2550,7 @@ std::vector<Row> main_rows(bool* open) {
         add_bool(r, "updates", "Check for updates", &c.updates, "Updates");
         header(r, "data.head", tr("Your game"));
         action(r, "game.folder", tr("Game folder"), []() { app_call_activity("showGameFolder"); }, true, "folder");
+        action(r, "user.folder", tr("User folder"), []() { app_call_activity("showUserFolder"); }, true, "folder");
         action(r, "save.folder", tr("Save folder"), []() { app_call_activity("showSaveFolder"); }, true, "savefolder");
         action(r, "save.import", tr("Import save"), []() { app_call_activity("showSaveImport"); }, true, "import");
         action(r, "save.export", tr("Export save"), []() { app_call_activity("showSaveExport"); }, true, "export");
