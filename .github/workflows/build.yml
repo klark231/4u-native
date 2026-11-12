@@ -48,7 +48,7 @@ jobs:
       - name: Build SDL3
         run: sh scripts/build_sdl3.sh
       - name: Build APK
-        run: sh scripts/build_apk.sh
+        run: sudo ln -sf bash /bin/sh && sh scripts/build_apk.sh
       - name: Name the APK
         id: apk
         run: |
