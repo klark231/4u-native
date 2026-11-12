@@ -327,6 +327,58 @@ def translate_tables(version: dict, entries: dict, hooks: dict, tunables: dict) 
     return entries, hooks, tunables
 
 
+def layout_of(header: exh.ExHeader) -> tuple:
+    return ((header.text.address, header.text.size), (header.ro.address, header.ro.size),
+            (header.data.address, header.data.size), header.bss_size)
+
+
+def match_layout(header: exh.ExHeader, versions_path: str | None = None) -> str | None:
+    """The known version whose segments (versions.json) are the header's, if any: tells which game
+    a code mod's own exheader.bin was made for."""
+    with open(versions_path or os.path.join(ROOT, "config", "versions.json")) as f:
+        versions = json.load(f)["versions"]
+    # (text and read-only data: a mod may enlarge the data segment, to hold what the game kept in bss)
+    want = {"text": (header.text.address, header.text.size), "rodata": (header.ro.address, header.ro.size)}
+    for v in versions:
+        seg = v.get("segments") or {}
+        try:
+            have = {k: (int(seg[k][0], 16), int(seg[k][1], 16)) for k in want}
+        except (KeyError, ValueError, IndexError):
+            continue
+        if have == want:
+            return v["name"]
+    return None
+
+
+def map_to_mod(dump_header: exh.ExHeader, dump_code: bytes, mod_header: exh.ExHeader, mod_code: bytes,
+               functions_path: str) -> "version_map.Shifts":
+    """Where the target version's functions (the tables' addresses) are in a code mod that replaces the
+    whole code.bin (another version of the game, patched): tools/version_map.py's matching, run
+    between the dump's code and the mod's. Only .text moves; the read-only data and data keep their
+    addresses, as the tables expect."""
+    src = version_map.Image(dump_header.text.address, dump_code, dump_header.text.address + dump_header.text.size)
+    dst = version_map.Image(mod_header.text.address, mod_code, mod_header.text.address + mod_header.text.size)
+    shifts, report = version_map.build_shifts(src, dst, version_map.load_functions(functions_path))
+    print(f"  mapped {report['mapped']}/{report['functions']} of the game's functions into the mod's code "
+          f"({report['intervals']} intervals, {report['cross_checked']} branches/pointers cross-checked)")
+    return shifts
+
+
+def translate_with(shifts: "version_map.Shifts", entries: dict, hooks: dict, tunables: dict) -> tuple[dict, dict, dict]:
+    """The tables at the mod's addresses. A hook or tunable the mod moved out of reach is dropped with a
+    warning (the mod changed that code); the build goes on without it."""
+    entries, dropped = shifts.translate_keys(entries)
+    hooks, missing_hooks = shifts.translate_keys(hooks)
+    tunables, missing_tunables = shifts.translate_keys(tunables)
+    print(f"  addresses mapped into the mod's code: {len(entries)} entry points "
+          f"({len(dropped)} in code the mod changed, left to the analysis)")
+    for a in missing_hooks:
+        print(f"  warning: hook 0x{a:08x} not found in the mod's code: left out")
+    for a in missing_tunables:
+        print(f"  warning: tunable 0x{a:08x} not found in the mod's code: left out")
+    return entries, hooks, tunables
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dump", help="decrypted .cia / .3ds / .cci / .cxi of your own copy")
@@ -403,19 +455,46 @@ def main(argv=None) -> int:
     mods_dir = None if args.no_mods else (args.mods or args.install)
     used, changes_code = [], False
     unmodded_code = code
+    mod_header = header          # the exheader the game runs with: the mod's own, when it brings one
+    own_layout = False
     if mods_dir:
-        modded, used = code_mods.apply_mods(code, mods_dir, program_id, header.bss_size)
+        override = code_mods.find_exheader(mods_dir, program_id)
+        if override:
+            with open(override, "rb") as f:
+                try:
+                    mod_header = exh.parse(f.read())
+                except (ValueError, struct.error) as e:
+                    raise SystemExit(f"the mod's exheader.bin ({override}) can't be read: {e}")
+            own_layout = layout_of(mod_header) != layout_of(header)
+            print(f"exheader override: {override}")
+            if own_layout:
+                known = match_layout(mod_header, args.versions)
+                print(f"  the mod's exheader gives the code its own layout: text 0x{mod_header.text.size:X}, "
+                      f"read-only data 0x{mod_header.ro.size:X}, data 0x{mod_header.data.size:X}, "
+                      f"bss 0x{mod_header.bss_size:X}"
+                      + (f" (the segments of {known})" if known else ""))
+        modded, used = code_mods.apply_mods(code, mods_dir, program_id, mod_header.bss_size)
         if used:
-            segments = [("code", 0, header.text.size),
-                        ("read-only data", header.ro.address - header.text.address, header.ro.size),
-                        ("data", header.data.address - header.text.address, header.data.size)]
             print("code mods: " + ", ".join(used))
-            for line in code_mods.describe(code, modded, segments):
-                print(f"  {line}")
-            cave = code_mods.changed_bytes(code, modded, header.text.size, header.text.padded_size - header.text.size)
-            if cave:
-                print(f"  after the code, in its last page: {cave} bytes changed (new code)")
-            changes_code = code_mods.changed_bytes(code, modded, 0, header.text.padded_size) > 0
+            if own_layout:
+                # the mod replaces the whole code.bin with another build: counting its bytes against the
+                # update's would only say "everything differs" (the segments are not in the same places)
+                print("  the mod is a whole code.bin of its own, not a patch on this update's")
+                if len(modded) < mod_header.text.size:
+                    raise SystemExit(f"the mod's code.bin is 0x{len(modded):X} bytes, shorter than the text "
+                                     f"segment its exheader.bin says (0x{mod_header.text.size:X})")
+                changes_code = True
+            else:
+                segments = [("code", 0, header.text.size),
+                            ("read-only data", header.ro.address - header.text.address, header.ro.size),
+                            ("data", header.data.address - header.text.address, header.data.size)]
+                for line in code_mods.describe(code, modded, segments):
+                    print(f"  {line}")
+                cave = code_mods.changed_bytes(code, modded, header.text.size,
+                                               header.text.padded_size - header.text.size)
+                if cave:
+                    print(f"  after the code, in its last page: {cave} bytes changed (new code)")
+                changes_code = code_mods.changed_bytes(code, modded, 0, header.text.padded_size) > 0
             if changes_code:
                 print("  the mod changes the game's code: this library runs only with the same mod in "
                       "Azahar's mods folder (build again after adding, changing or removing it)")
@@ -423,14 +502,20 @@ def main(argv=None) -> int:
 
     out = os.path.join(args.out, "recomp")
     print("recompiling (a couple of minutes)")
-    size = recompile.code_size(header, code)
-    if size != header.text.size:
+    run_header = mod_header      # the layout the game runs with (the mod's exheader.bin, if it brings one)
+    size = recompile.code_size(run_header, code)
+    if size != run_header.text.size:
         print(f"  the code mod puts new code after the game's own: recompiling 0x{size:X} bytes "
-              f"(to the end of the code's last page) instead of 0x{header.text.size:X}")
+              f"(to the end of the code's last page) instead of 0x{run_header.text.size:X}")
     # a code mod's new code in the read-only data (some mods put their routines there, which only an
     # emulator runs as it is): the runs of bytes the mod changed there, 16 bytes or longer, may hold code
     extra_code = []
-    if changes_code and unmodded_code is not None:
+    if changes_code and own_layout:
+        # no update's bytes to compare with (another build of the game): the whole read-only data is
+        # offered, and the recompiler takes from it only what the code reaches
+        extra_code = [(run_header.ro.address, run_header.ro.address + run_header.ro.padded_size)]
+        print("  the mod's read-only data may hold code: recompiled where the code reaches it")
+    elif changes_code and unmodded_code is not None:
         ro_start = header.ro.address - header.text.address
         ro_end = ro_start + header.ro.padded_size  # (the padding after it too: a mod may put code there)
         run = None
@@ -444,12 +529,16 @@ def main(argv=None) -> int:
         extra_code = [(header.text.address + s, header.text.address + e) for s, e in extra_code if e - s >= 16]
         if extra_code:
             print(f"  the code mod changes {len(extra_code)} stretches of the read-only data that may hold code: "
-                  "recompiled too where the code reaches them")
-    img = Image(code, header.text.address, size, extra_code)
+                  "recompiled where the code reaches them")
+    img = Image(code, run_header.text.address, size, extra_code)
     entries, hooks, tunables = translate_tables(
         version or {}, recompile.load_entries(args.functions, [args.extra] if args.extra else []),
         recompile.load_hooks(args.hooks), recompile.load_tunables(args.tunables))
-    segs = [(header.ro.address, header.ro.size), (header.data.address, header.data.size)]
+    if own_layout:
+        # the tables hold the target version's addresses: find them in the mod's own code
+        shifts = map_to_mod(header, unmodded_code, run_header, code, args.functions)
+        entries, hooks, tunables = translate_with(shifts, entries, hooks, tunables)
+    segs = [(run_header.ro.address, run_header.ro.size), (run_header.data.address, run_header.data.size)]
     res = recompile.recompile(img, entries, out, data_segments=segs, title_id=program_id,
                               hooks=hooks, tunables=tunables, log=lambda m: print(m, flush=True))
     print(f"{res['report']['functions']} functions, {res['report']['hook_points']} hook points")
@@ -502,7 +591,7 @@ def main(argv=None) -> int:
         os.makedirs(dest_dir, exist_ok=True)
         shutil.copy2(lib, os.path.join(dest_dir, name))
         # what it was built from, for tools/mods.py status (docs/MODS.md)
-        mods.write_build_record(os.path.join(dest_dir, name), used, header.text.size, changes_code, program_id,
+        mods.write_build_record(os.path.join(dest_dir, name), used, run_header.text.size, changes_code, program_id,
                                 code_size=size)
         print(f"installed to {os.path.join(dest_dir, name)}")
     return 0

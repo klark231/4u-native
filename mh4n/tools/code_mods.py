@@ -128,6 +128,15 @@ def find_mods(user_dir: str, program_id: int) -> tuple[str | None, str | None]:
     return replacement, patch
 
 
+def find_exheader(user_dir: str, program_id: int) -> str | None:
+    """Azahar's exheader override for this title (load/mods/<program id>/exheader.bin), or None.
+    A code.bin that is a whole replacement (a total-conversion mod, built on another version of the
+    game) comes with the exheader that says how its segments are laid out; Azahar loads that
+    exheader instead of the game's, and so must whatever builds a code library from the mod."""
+    path = os.path.join(mod_dir(user_dir, program_id), "exheader.bin")
+    return path if os.path.isfile(path) else None
+
+
 MAX_BSS_SIZE = 0x10000000      # the New 3DS FCRAM size
 
 

@@ -140,6 +140,15 @@ std::optional<std::vector<u8>> ModFolder::ExheaderOverride() const {
     return data;
 }
 
+std::optional<std::vector<u8>> ExheaderOverrideOf(const std::vector<std::string>& folders) {
+    for (std::size_t i = folders.size(); i-- > 0;) {
+        if (auto exheader = ModFolder(folders[i]).ExheaderOverride()) {
+            return exheader;
+        }
+    }
+    return std::nullopt;
+}
+
 Outcome ApplyFolders(const std::vector<std::string>& folders, std::vector<u8>& code, u32 bss_pages) {
     const auto name = [](const std::string& folder) {
         std::string f = folder;

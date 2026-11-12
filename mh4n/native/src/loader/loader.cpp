@@ -113,6 +113,18 @@ std::unique_ptr<Loader> Loader::OpenGameFolder(const std::string& dir, const std
         // Azahar's load/mods/<program id>/ this is Azahar's ModFolder
         const std::string folder = load_dir + "mods/";
         const std::vector<mods::Mod> enabled = mods::Enabled(folder, header.program_id);
+        // The exheader.bin of a mod replaces the game's, as in Azahar: a mod whose code.bin is a whole build
+        // of its own (not a patch on the update) says in it how that code is laid out (segments, bss).
+        if (auto override_bytes = mods::ExheaderOverride(enabled)) {
+            ExHeader override_header;
+            if (!ParseExHeader(override_bytes->data(), override_bytes->size(), &override_header, error)) {
+                return nullptr;
+            }
+            MH4N_LOG(Info, "Loader", "exheader override: text 0x{:X}, ro 0x{:X}, data 0x{:X}, bss 0x{:X}",
+                     override_header.text.size, override_header.ro.size, override_header.data.size,
+                     override_header.bss_size);
+            header = override_header;
+        }
         const code_patch::Outcome outcome = mods::ApplyCode(enabled, code, 0);
         if (!outcome.ok) {
             SetError(error, outcome.error + (outcome.detail.empty() ? "" : " (" + outcome.detail + ")"));

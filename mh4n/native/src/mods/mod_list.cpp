@@ -66,7 +66,7 @@ Mod Describe(const std::string& folder, const std::string& name) {
     m.path = WithSlash(folder) + name + "/";
     const stdfs::path p = utf8::PathFromUtf8(m.path);
     m.romfs = IsDir(p / "romfs") || IsDir(p / "romfs_ext");
-    for (const char* rel : {"exefs/code.ips", "exefs/code.bps", "exefs/code.bin", "code.ips", "code.bps", "code.bin"}) {
+    for (const char* rel : {"exefs/code.ips", "exefs/code.bps", "exefs/code.bin", "code.ips", "code.bps", "code.bin", "exheader.bin"}) {
         if (Exists(p / stdfs::path(rel))) m.code = true;
     }
     return m;
@@ -218,6 +218,14 @@ code_patch::Outcome ApplyCode(const std::vector<Mod>& mods, std::vector<u8>& cod
     return code_patch::ApplyFolders(folders, code, bss_pages);
 }
 
+std::optional<std::vector<u8>> ExheaderOverride(const std::vector<Mod>& mods) {
+    std::vector<std::string> folders;
+    for (const Mod& m : mods) {
+        if (m.on && m.code) folders.push_back(m.path);
+    }
+    return code_patch::ExheaderOverrideOf(folders);
+}
+
 std::vector<Layer> RomFsLayers(const std::vector<Mod>& mods) {
     std::vector<Layer> out;
     for (const Mod& m : mods) {
@@ -256,6 +264,10 @@ CodeCheck CheckCode(const std::string& game_folder, const std::vector<Mod>& mods
     if (!read(dir / "exheader.bin", &exheader) || !read(dir / "code.bin", &code)) {
         check.error = "the game folder's code can't be read";
         return check;
+    }
+    // a mod's exheader.bin replaces the game's, as Azahar does (a whole code.bin of another build)
+    if (auto override_header = ExheaderOverride(mods)) {
+        exheader = std::move(*override_header);
     }
     ExHeader header;
     std::string error;

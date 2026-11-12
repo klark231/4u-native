@@ -24,6 +24,7 @@
 // copied from the mods folder beside the game (GameFolderActivity.syncMods), one per line.
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -62,6 +63,9 @@ bool SaveOrder(const std::string& folder, const std::vector<Mod>& mods, std::str
 
 // The game's code with the code mods of `mods` that are on applied, in order (code_patch::ApplyFolders).
 code_patch::Outcome ApplyCode(const std::vector<Mod>& mods, std::vector<u8>& code, u32 bss_pages);
+// The exheader.bin of the last mod that is on and has one: it replaces the game's exheader (Azahar's
+// override), whatever the game folder's says. Nothing when no mod brings one.
+std::optional<std::vector<u8>> ExheaderOverride(const std::vector<Mod>& mods);
 // The LayeredFS layers of the mods that are on, in order: each one's romfs/ and romfs_ext/.
 struct Layer {
     std::string romfs, romfs_ext;

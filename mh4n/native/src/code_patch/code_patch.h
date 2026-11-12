@@ -72,4 +72,9 @@ private:
 // file as <folder's name>/<file>.
 Outcome ApplyFolders(const std::vector<std::string>& folders, std::vector<u8>& code, u32 bss_pages);
 
+// The exheader of the last folder that has an exheader.bin (a later mod wins, as its files do): the 0x800
+// bytes that replace the game's exheader. A code.bin that replaces the whole code (another build of the
+// game) comes with the exheader that says how its segments are laid out, so both have to be used together.
+std::optional<std::vector<u8>> ExheaderOverrideOf(const std::vector<std::string>& folders);
+
 }  // namespace mh4n::code_patch
