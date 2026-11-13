@@ -832,10 +832,23 @@ u32 WideRows() {
 }
 
 /// nDraw::Scene::Scene(this, params): params {columns, rows, ...}; the main scene target.
+/// The first calls of the wide render's hooks, logged with what they were given (a code mod's game may set its
+/// targets up otherwise): which ones run, and with what.
+void LogWideCall(const char* what, u32 a, u32 b, bool widened) {
+    static int logged = 0;
+    if (WideRows() != 0 && logged < 24) {
+        ++logged;
+        LogInfo("wide render: {} {}x{}{}", what, a, b, widened ? ", widened" : "");
+    }
+}
+
 void SceneCtor(RCtx* ctx, RFunc original) {
     const u32 rows = WideRows();
     const u32 params = ctx->r[1];
-    if (rows && rd32(ctx, params) == LCD_COLUMNS && rd32(ctx, params + 4) == TOP_ROWS) {
+    const u32 columns0 = rd32(ctx, params), rows0 = rd32(ctx, params + 4);
+    const bool widen = rows && columns0 == LCD_COLUMNS && rows0 == TOP_ROWS;
+    LogWideCall("nDraw::Scene", columns0, rows0, widen);
+    if (widen) {
         wr32(ctx, params + 4, rows);
         LogInfo("wide render: scene target {}x{}", rows, LCD_COLUMNS);
     }
@@ -846,7 +859,9 @@ void SceneCtor(RCtx* ctx, RFunc original) {
 /// Azahar's LCD then has to show that many rows.
 void DisplayBufferInit(RCtx* ctx, RFunc original) {
     const u32 rows = WideRows();
-    if (rows && ctx->r[1] == LCD_COLUMNS && ctx->r[2] == TOP_ROWS) {
+    const bool widen = rows && ctx->r[1] == LCD_COLUMNS && ctx->r[2] == TOP_ROWS;
+    LogWideCall("nDraw::DisplayBuffer::init", ctx->r[1], ctx->r[2], widen);
+    if (widen) {
         ctx->r[2] = rows;
         P().SetTopScreenRows(rows);
     }
