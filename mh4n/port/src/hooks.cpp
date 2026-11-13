@@ -43,9 +43,12 @@ struct Addr {
     std::uint32_t stock;
     operator std::uint32_t() const { return stock; }
 };
+inline std::uint32_t Stock(std::uint32_t running) { return running; }
 }  // namespace mh4n::guest
 #endif
 using GuestAddr = mh4n::guest::Addr;  // a fixed address of the update's, as the code the game runs has it
+// The update's address of a vtable (or any address) read from the game's memory, to compare with the update's
+inline std::uint32_t StockAddr(std::uint32_t running) { return mh4n::guest::Stock(running); }
 
 namespace Port::Hooks {
 
@@ -1807,7 +1810,7 @@ double filters_since = 0;
 
 /// render(this, cDraw*) of a screen filter class.
 void FilterRender(RCtx* ctx, RFunc original) {
-    const u32 vtable = rd32(ctx, ctx->r[0]);
+    const u32 vtable = StockAddr(rd32(ctx, ctx->r[0]));
     for (u32 i = 0; i < std::size(SCREEN_FILTERS); ++i) {
         if (SCREEN_FILTERS[i].vtable != vtable) {
             continue;
@@ -1963,7 +1966,7 @@ u32 LocalHunter(RCtx* ctx, int* weapon) {
     if (!HeapPointer(hunter)) {
         return 0;
     }
-    const u32 vtable = rd32(ctx, hunter);
+    const u32 vtable = StockAddr(rd32(ctx, hunter));
     for (int i = 0; i < 15; ++i) {
         if (WEAPON_VTABLES[i] != 0 && WEAPON_VTABLES[i] == vtable) {
             *weapon = i;
@@ -2336,13 +2339,13 @@ void UpdateGameState(RCtx* ctx) {
     const u32 areas = rd32(ctx, SAREA_INSTANCE);
     const u32 count = HeapPointer(areas) ? rd32(ctx, areas + AREA_COUNT) : 0;
     const u32 top = count >= 1 && count <= 8 ? rd32(ctx, areas + AREA_TABLE + 4 * (count - 1)) : 0;
-    const u32 scene = HeapPointer(top) ? rd32(ctx, top) : 0;
+    const u32 scene = HeapPointer(top) ? StockAddr(rd32(ctx, top)) : 0;
     bool hold = false;  // between areas: the menu as it was
     switch (scene) {
     case VT_AVILLAGE: {
         s.place = GameState::PLACE_TOWN;
         const u32 lobby = rd32(ctx, LOBBY);
-        if (HeapPointer(lobby) && rd32(ctx, lobby) == VT_CLBMAIN) {
+        if (HeapPointer(lobby) && StockAddr(rd32(ctx, lobby)) == VT_CLBMAIN) {
             s.town_panel = rd8(ctx, lobby + LOBBY_PANEL);
             // The lobby's byte stays 1 after a gesture is done and the Gestures menu closed, until the hunter moves:
             // not a menu. Only on that way out of the touch screen's three menus (Guild Cards 5, Gestures 8, Friends
