@@ -911,23 +911,37 @@ void UpdateRegion(RCtx* ctx, RFunc original) {
 /// but 624 once a W over 512 makes it 1024 rows tall.
 void WideTransfer(RCtx* ctx) {
     const u32 rows = WideRows();
-    const u32 render = rows ? rd32(ctx, SLTRENDER_INSTANCE) : 0;
+    if (rows == 0) {
+        return;
+    }
+    const u32 render = rd32(ctx, SLTRENDER_INSTANCE);
     const u32 scene = render ? rd32(ctx, render + SLTRENDER_SCENE) : 0;
     const u32 target = scene ? rd32(ctx, scene + SCENE_TARGET) : 0;
     const u32 textures = target ? rd32(ctx, target + TARGET_TEXTURES) : 0;
     const u32 texture = textures ? rd32(ctx, textures) : 0;
-    if (texture == 0) {
+    u32 height = texture ? (rd32(ctx, texture + TEXTURE_SIZE) >> 16) & 0x7FFF : 0;
+    const u32 read_height = height;
+    if (height < rows) {
+        // the texture could not be read (or says less than the picture needs): the target has a power of two of
+        // rows, 512 up to 512 of them and 1024 above (see WideRows)
+        height = rows > 512 ? 1024 : 512;
+    }
+    if (frames == 120 || frames == 1200) {
+        LogInfo("wide render: transfer check: render {:#x}, scene {:#x}, target {:#x}, texture {:#x}, rows read {}, "
+                "rows used {}, picture {}, top transfer row {} (wanted {})",
+                render, scene, target, texture, read_height, height, rows,
+                render ? rd32(ctx, render + SLTRENDER_TOP_TRANSFER_Y) : 0u, height - rows);
+    }
+    if (render == 0) {
         return;
     }
-    const u32 height = (rd32(ctx, texture + TEXTURE_SIZE) >> 16) & 0x7FFF;
-    if (height >= rows && rd32(ctx, render + SLTRENDER_TOP_TRANSFER_Y) != height - rows) {
+    if (rd32(ctx, render + SLTRENDER_TOP_TRANSFER_Y) != height - rows) {
         wr32(ctx, render + SLTRENDER_TOP_TRANSFER_Y, height - rows);
         LogInfo("wide render: top screen transferred from row {} of {}", height - rows, height);
     }
     if (height >= TOP_ROWS && rd32(ctx, render + SLTRENDER_BOTTOM_TRANSFER_Y) != height - TOP_ROWS) {
         wr32(ctx, render + SLTRENDER_BOTTOM_TRANSFER_Y, height - TOP_ROWS);
-        LogInfo("wide render: bottom screen transferred from row {} of {}", height - TOP_ROWS,
-                height);
+        LogInfo("wide render: bottom screen transferred from row {} of {}", height - TOP_ROWS, height);
     }
 }
 
