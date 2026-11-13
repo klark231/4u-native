@@ -11,10 +11,14 @@
 // of a function the library has none for. Run executes one instruction at a time, from guest memory,
 // until control reaches the address the recompiled caller expects (LR, or the caller's own return
 // address when the function was entered by a tail call: RCtx::expect_next) with the stack pointer at or
-// above where it was. Calls made by the interpreted code are interpreted too; a system call goes to the
-// kernel through the code host, so it can block and switch threads like any other.
+// above where it was. A call (or a jump) the interpreted code makes to a function the library has runs that
+// recompiled function, as a call from recompiled code would: at its speed, and through its hook point if it
+// has one (a code mod's routine in the data segment that calls the game's frame-rate update must not skip
+// the port's frame limiter). Calls to code with no recompiled function are interpreted too; a system call
+// goes to the kernel through the code host, so it can block and switch threads like any other.
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -61,6 +65,11 @@ public:
     // does) instead of looking at the preemption flag. The default follows the code host's library.
     void SetChargeBudget(bool charge) { charge_budget_ = charge; }
 
+    // Where the recompiled functions are: the code host's library by default (CodeLibrary::Find). Tests give
+    // their own.
+    using NativeLookup = std::function<GuestFunction(u32 target)>;
+    void SetNativeLookup(NativeLookup lookup) { native_lookup_ = std::move(lookup); }
+
     // The missing-function handler: runs the code at `target` (Thumb bit set as in the function table)
     // until it returns. On the guest thread's fiber, in the host's FPU mode (the CodeHost sets that up).
     void Run(RCtx& ctx, u32 target);
@@ -68,6 +77,8 @@ public:
     // Entries interpreted so far (with the Thumb bit), in the order they were first entered.
     const std::vector<u32>& Entries() const { return entries_; }
     u64 InstructionCount() const { return instructions_; }
+    // Calls from interpreted code that ran a recompiled function.
+    u64 NativeCallCount() const { return native_calls_; }
     // Addresses (Thumb bit clear) of the UNPREDICTABLE encodings executed, once each.
     const std::vector<u32>& UnpredictableAddresses() const { return unpredictable_; }
 
@@ -75,6 +86,7 @@ private:
     void NoteEntry(u32 target, u32 lr);
     void NoteUnpredictable(u32 pc, bool thumb, u32 word);
     void AppendEntry(u32 target);
+    GuestFunction NativeAt(u32 target) const;
 
     CodeHost& host_;
     volatile u32* preempt_flag_;
@@ -86,7 +98,9 @@ private:
     std::unordered_set<u32> unpredictable_set_;
     std::vector<u32> unpredictable_;
     u64 instructions_ = 0;
+    u64 native_calls_ = 0;
     std::optional<bool> charge_budget_;
+    NativeLookup native_lookup_;
 };
 
 }  // namespace mh4n

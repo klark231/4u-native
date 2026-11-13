@@ -106,6 +106,14 @@ void Interpreter::NoteUnpredictable(u32 pc, bool thumb, u32 word) {
              thumb ? "Thumb" : "ARM", word, thumb ? 4 : 8, pc);
 }
 
+GuestFunction Interpreter::NativeAt(u32 target) const {
+    if (native_lookup_) {
+        return native_lookup_(target);
+    }
+    const CodeLibrary* library = host_.Library();
+    return library != nullptr ? library->Find(target) : nullptr;
+}
+
 void Interpreter::Run(RCtx& ctx, u32 target) {
     NoteEntry(target, ctx.r[14]);
     // A tail call says where the code should come back to (the caller's own return address, which LR may
@@ -131,6 +139,20 @@ void Interpreter::Run(RCtx& ctx, u32 target) {
         ++instructions_;
         if (ctx.r[15] == return_to && ctx.r[13] >= return_sp) {
             break;
+        }
+        // A call or a jump to a function the library has: the recompiled function runs (and its hook point, the
+        // port's code, with it), as a call from recompiled code would, and the interpreter goes on from where it
+        // returns. Only a branch can get there (the next instruction is 2 or 4 bytes on).
+        if (const u32 step = ctx.r[15] - pc; step != 2 && step != 4) {
+            if (const GuestFunction function = NativeAt(ctx.r[15])) {
+                ++native_calls_;
+                ctx.expect_next = 0;
+                function(&ctx);  // leaves the address it returned to in r15
+                rc_apply_rounding(ctx.fpscr);
+                if (ctx.r[15] == return_to && ctx.r[13] >= return_sp) {
+                    break;
+                }
+            }
         }
         // Unlike recompiled code, which checks at the start of a basic block, this check follows every
         // instruction, so it can fall between an LDREX and its STREX. A thread that other threads displaced may find the word it
