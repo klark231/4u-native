@@ -32,6 +32,11 @@ class Image:
         # data (tools/build_game.py finds them from the bytes the mod changes). Only code reached from an
         # entry point is decoded there, as in the text.
         self.extra_code = sorted(extra_code or [])
+        # A code mod may put routines in the data segment (a "code cave" past the read-only data) and branch
+        # to them from the text. When this is set, such a branch becomes a call the runtime interprets
+        # (as for any address with no recompiled code) instead of a trap. Off for the game's own code, whose
+        # generated code stays the same.
+        self.interpret_outside = False
 
     def read32(self, a: int) -> int | None:
         off = a - self.base
@@ -44,6 +49,11 @@ class Image:
         if 0 <= off <= len(self.code) - 2 and not a & 1:
             return struct.unpack_from("<H", self.code, off)[0]
         return None
+
+    def in_image(self, a: int, mode: str = "arm") -> bool:
+        """An address inside the loaded program (text, read-only data, data), aligned for its mode."""
+        return (self.base <= a < self.base + len(self.code) and not a & 1
+                and not (mode == "arm" and a & 3))
 
     def in_text(self, a: int) -> bool:
         if self.base <= a < self.text_end:
@@ -401,6 +411,8 @@ class Analyzer:
         if entries.get(target) == tmode:
             return "tail"
         if not self.img.in_text(target) or (tmode == "arm" and target & 3) or target & 1:
+            if self.img.interpret_outside and self.img.in_image(target, tmode):
+                return "tail"
             return "bad"
         return "goto"
 

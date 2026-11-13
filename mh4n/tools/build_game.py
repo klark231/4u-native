@@ -78,7 +78,8 @@ ID_FILES = ["tools/recompile.py", "tools/build_function_table.py", "tools/recomp
             "tools/recomp/runtime/recomp.h", "tools/recomp/runtime/rc_dll.c", "tools/recomp/runtime/android/fenv.h",
             "tools/recomp/runtime/android/math.h", "tools/recomp/runtime/android/string.h", "config/functions.tsv",
             "tools/pica_native.py", "tools/romfs_image.py", "tools/recomp/runtime/pica_native.h",
-            "config/extra_entries.txt", "config/hooks.txt", "config/tunables.txt"]
+            "config/extra_entries.txt", "config/hooks.txt", "config/tunables.txt",
+            "config/guest_addrs.txt", "tools/guest_map.py"]
 
 
 def code_library_id(native: bool = True, deterministic: bool = False, root: str = ROOT) -> str:

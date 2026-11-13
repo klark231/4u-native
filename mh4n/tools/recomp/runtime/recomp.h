@@ -146,6 +146,9 @@ typedef struct RCodeInfo {
     const u32 *tunable_addrs;  /* the instruction whose immediate each one replaces, sorted */
     const char *const *tunable_names;
     u32 tunable_count;
+    const u32 *guest_from;     /* the app's own addresses (config/guest_addrs.txt), sorted, */
+    const u32 *guest_to;       /* and where this code has them (equal when it is the update's) */
+    u32 guest_count;
 } RCodeInfo;
 
 /* exported by a code library under this name; returns 0 if the host doesn't match */

@@ -283,7 +283,7 @@ void DspShared::CaptureFrame(const u8* dsp_memory) {
     }
     // The game's frame counter, read now; a program that does not map it has no frames.
     u32 frame = 0;
-    if (const auto value = context_->Memory().Read<u32>(kFrameCounterAddress)) {
+    if (const auto value = context_->Memory().Read<u32>(FrameCounterAddress())) {
         frame = *value;
     }
     if (!capture.started && frame < capture.start_frame) {

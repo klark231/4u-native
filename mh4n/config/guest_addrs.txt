@@ -1,0 +1,40 @@
+# The addresses the app's own code (port/src/hooks.cpp, swkbd_bridge.cpp, the native runtime) uses in
+# the game, at the USA v1.3.0 update's addresses. When a code mod replaces the whole code.bin with
+# another build of the game (Heavenfall), functions and variables are not where they are in the
+# update: tools/guest_map.py finds where each one is, and the library carries the pairs
+# (rc_guest_from / rc_guest_to) for the app to look up (mh4n/guest_addr.h).
+#
+#   <address>  fn|data  <name>
+#
+# fn:   a function's entry (found like a hook: exact twin, else by similarity).
+# data: a variable (found through the literal pools of the code that uses it).
+0x0010d934 fn SVC_SLEEP_THREAD
+0x006442f8 fn UPDATE_FRAME_TIMING
+0x00b7c010 fn QUEST_START
+0x006bc838 fn QUEST_LIST_RELEASE
+0x00b31fa4 fn FN_ITEM_NEXT
+0x00d04f6c fn FN_IS_LOCAL
+0x00312928 fn FN_PLAY_SOUND
+0x006b3fe0 fn FN_HOLDER_ASK
+0x006b3c84 fn FN_HOLDER_ENDING
+0x00b1d764 fn FN_SET_ACTION
+0x00b3d0d8 fn FN_FACE_STICK
+0x00b67070 fn FN_AFTER_SET_ACTION
+0x00b185c8 fn FN_ROLL_REFUSED
+0x00b0d734 fn FN_ROLL
+0x00666d8c fn TM_SET_TEXT
+0x006654b4 fn LM_FIND_LINE
+0x003ae264 fn KBD_FINISH
+0x0104deb4 data SKBD_INSTANCE
+0x01057194 data SMAIN_INSTANCE
+0x010571d4 data FRAMES_SUBMITTED
+0x01057298 data SAREA_INSTANCE
+0x0105729c data SCAMERA_INSTANCE
+0x010572cc data SLTRENDER_INSTANCE
+0x0108260c data QUEST_HUD
+0x01082cec data QUEST_PANELS
+0x01083858 data HUD_MENU_PANEL
+0x0108b9bc data GAME_MENU
+0x0109a350 data PANEL_MANAGER
+0x0110d004 data VBLANK_TOP
+0x0110d008 data VBLANK_BOTTOM

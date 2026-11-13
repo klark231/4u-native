@@ -24,6 +24,7 @@ extern const u32 rc_hook_addrs[], rc_hook_count;
 extern const char *const rc_hook_names[];
 extern const u32 rc_tunable_addrs[], rc_tunable_count;
 extern const char *const rc_tunable_names[];
+extern const u32 rc_guest_from[], rc_guest_to[], rc_guest_count;
 
 /* Which runtime this library was built for, so a host can refuse another one with a clear
  * message before it calls rc_code_init: 0 = RC_PAGED, 1 = RC_NATIVE, 2 = RC_NATIVE with
@@ -147,5 +148,8 @@ RC_EXPORT int rc_code_init(const RHost *h, RCodeInfo *info) {
     info->tunable_addrs = rc_tunable_addrs;
     info->tunable_names = rc_tunable_names;
     info->tunable_count = rc_tunable_count;
+    info->guest_from = rc_guest_from;
+    info->guest_to = rc_guest_to;
+    info->guest_count = rc_guest_count;
     return 1;
 }

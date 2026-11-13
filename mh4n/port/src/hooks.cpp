@@ -32,6 +32,17 @@
 // (RC_PAGED for Azahar's page table, flat otherwise: see tools/recomp/runtime/recomp.h).
 extern "C" {
 #include "recomp.h"
+#if __has_include("mh4n/guest_addr.h")
+#include "mh4n/guest_addr.h"
+#else
+namespace mh4n::guest {
+struct Addr {
+    std::uint32_t stock;
+    operator std::uint32_t() const { return stock; }
+};
+}  // namespace mh4n::guest
+#endif
+using GuestAddr = mh4n::guest::Addr;  // a fixed address of the update's, as the code the game runs has it
 }
 
 namespace Port::Hooks {
@@ -71,15 +82,15 @@ void LogInfo(fmt::format_string<Args...> format, Args&&... args) {
 }
 
 // USA v1.3.0 addresses and offsets (docs/research/system-services.md, widescreen.md).
-constexpr u32 SMAIN_INSTANCE = 0x01057194;  // sMhMain*: the engine's main system (an sMain)
+constexpr GuestAddr SMAIN_INSTANCE{0x01057194};  // sMhMain*: the engine's main system (an sMain)
 constexpr u32 SMAIN_RATE = 0x2c;            // f32: the unit of delta, in frames per second (60)
 constexpr u32 SMAIN_CAP = 0x30;             // f32: frame-rate cap of the frame limiter
 constexpr u32 SMAIN_FPS = 0x34;             // f32: measured frame rate, refreshed each second
 constexpr u32 SMAIN_DELTA = 0x5c;           // f32: last frame's length in 1/rate s
-constexpr u32 VBLANK_TOP = 0x0110d004;      // VBlank counters kept by the GX library
-constexpr u32 VBLANK_BOTTOM = 0x0110d008;
-constexpr u32 FRAMES_SUBMITTED = 0x010571d4;
-constexpr u32 SLTRENDER_INSTANCE = 0x010572cc;
+constexpr GuestAddr VBLANK_TOP{0x0110d004};      // VBlank counters kept by the GX library
+constexpr GuestAddr VBLANK_BOTTOM{0x0110d008};
+constexpr GuestAddr FRAMES_SUBMITTED{0x010571d4};
+constexpr GuestAddr SLTRENDER_INSTANCE{0x010572cc};
 constexpr u32 SLTRENDER_DISPLAY_SKIP = 0x8aa8;  // u32[2] mDisplaySkip: top, bottom
 // Render settings word: bits set by sLtRender's property setters (0x00bf685c registers them):
 // 0x1 mVSyncEdit, 0x4 mTripleBufferRenderWaitEdit, 0x8 mUpsideToTopEdit, 0x10 mYFlipEdit,
@@ -91,8 +102,8 @@ constexpr u32 RENDER_STEREO = 0x40;             // mULCDEnableEdit: the top scre
 constexpr u32 RENDER_ANTIALIASING = 0x4400;     // mFSAA_2D (0x400) and 0x4000: the game's anti-aliasing
                                                 // (the community's Trinity Disabler clears both; without
                                                 // them the edges are jagged)
-constexpr u32 SAREA_INSTANCE = 0x01057298;      // sMhArea*: the game areas alive (scene-observable.md)
-constexpr u32 SCAMERA_INSTANCE = 0x0105729c;    // sMhCamera*
+constexpr GuestAddr SAREA_INSTANCE{0x01057298};      // sMhArea*: the game areas alive (scene-observable.md)
+constexpr GuestAddr SCAMERA_INSTANCE{0x0105729c};    // sMhCamera*
 constexpr u32 SCAMERA_VIEWPORTS = 0x18;         // 8 viewports of 0x1a8 bytes
 constexpr u32 VIEWPORT_SIZE = 0x1a8;
 constexpr u32 VIEWPORT_CAMERA = 0x04;           // uCamera*
@@ -487,7 +498,8 @@ float RefreshRate() {
     return options.fps_cap > 60.0f ? options.fps_cap : 0.0f;
 }
 
-constexpr u32 SVC_SLEEP_THREAD = 0x0010d934;  // nn::svc::SleepThread(s64 ns), r0:r1 (the limiter's own sleep)
+constexpr GuestAddr SVC_SLEEP_THREAD{0x0010d934};  // nn::svc::SleepThread(s64 ns), r0:r1 (the limiter's own sleep)
+constexpr GuestAddr UPDATE_FRAME_TIMING{0x006442f8};  // updateFrameTiming (a hook): the return address the limiter's call has
 constexpr float NATIVE_REFRESH = 59.831f;     // the 3DS's LCD
 
 #if __has_include("mh4n/pacing_trace.h")
@@ -530,7 +542,7 @@ void CallGame64(RCtx* ctx, u32 function, u64 arg) {
     ctx->expect_next = 0;
     ctx->r[0] = static_cast<u32>(arg);
     ctx->r[1] = static_cast<u32>(arg >> 32);
-    ctx->r[14] = 0x006442f8;
+    ctx->r[14] = UPDATE_FRAME_TIMING;
     rc_call(ctx, function);
     std::copy(std::begin(regs), std::end(regs), ctx->r);
     ctx->fn = flags[0];
@@ -1126,7 +1138,7 @@ void SetScreenAspect(float aspect, std::vector<std::string>& log) {
 
 // ── Touch panels (docs/research/second-screen.md): tracing, to map panel ids to actions
 // before binding them to buttons.
-constexpr u32 PANEL_MANAGER = 0x0109a350;
+constexpr GuestAddr PANEL_MANAGER{0x0109a350};
 constexpr u32 PANEL_FLAGS = 0xcc;     // u16: event flags of the last touch (0x0200 tapped)
 constexpr u32 PANEL_ID = 0xce;        // u16: id of the panel touched
 constexpr u32 SMHPAD_INJECTED = 0x3f0;   // u32: gameplay action bits set by panels
@@ -1140,7 +1152,7 @@ u32 last_panel_touch = 0xFFFFFFFF;
 // first, second, off (a monster not yet seen gets the "no" sound). The HUD clears the byte
 // at the end of the same update (0x00b9dfe0), and the game sets it itself from a menu
 // action in one control mode only. sCamera+0xed5 is the result: 0 off, n monster n.
-constexpr u32 QUEST_HUD = 0x0108260c;     // static (getQuestHud 0x0013f230)
+constexpr GuestAddr QUEST_HUD{0x0108260c};     // static (getQuestHud 0x0013f230)
 constexpr u32 HUD_TARGET_REQUEST = 0x27e;  // u8: toggle the target camera as a tap would
 // The quest HUD's update (0x00b9dfe0) switches on its state: in state 2 (hunting) it runs the
 // panels' state machine (0x00b9ba38) unless the panel manager is busy (0x002a4da0, as it is
@@ -1409,8 +1421,8 @@ constexpr u32 QUEST_LIST = 0xe608;            // holder: the resources found for
 constexpr u32 QUEST_LIST_COUNT = 0xe610;
 constexpr u32 RESOURCE_BUFFER = 0x64;         // resource: its file contents
 constexpr u32 QUEST_FLOW_PARAMS = 0x00edbe90; // [this]+0x9788: what 0x00b7c010 starts
-constexpr u32 QUEST_LIST_RELEASE = 0x006bc838;
-constexpr u32 QUEST_START = 0x00b7c010;
+constexpr GuestAddr QUEST_LIST_RELEASE{0x006bc838};
+constexpr GuestAddr QUEST_START{0x00b7c010};
 constexpr u32 QUEST_HOLD_MAX_FRAMES = 600;
 
 /// The quest id 0x00b7c010 is about to set up (its three branches), or 0.
@@ -1569,7 +1581,7 @@ void UpdateSkip(RCtx* ctx) {
 // one shape only, two slots tall. With quest_overlay, the touch screen in the corner of
 // the custom layout shows the map alone while the panels are up, and with target_overlay the
 // target camera panel in a view of its own beside it.
-constexpr u32 QUEST_PANELS = 0x01082cec;  // (getter 0x001287a4)
+constexpr GuestAddr QUEST_PANELS{0x01082cec};  // (getter 0x001287a4)
 constexpr u32 PANEL_TYPES = 0x7a;         // u16 per slot
 constexpr u32 PANEL_HIDDEN = 0xb1;        // u8: a bit per slot covered by the panel before it
 constexpr u32 PANEL_SLOTS = 6;
@@ -1865,10 +1877,10 @@ constexpr u32 GAME_CONTROL_PLAYER = 0x2f;  // s8: this console's player number
 constexpr u32 GAME_CONTROL_NO_UNITS = 0x5a;  // u8: 1 where sPlayer has no units (the towns)
 // The game's own "is a menu open" (0x005e7144, asked by the touch panels and the quest HUD): the START
 // menu's byte, four window bits beside it, and in a town or a quest a byte of the quest HUD's
-constexpr u32 GAME_MENU = 0x0108b9bc;      // (its getter 0x0012580c)
+constexpr GuestAddr GAME_MENU{0x0108b9bc};      // (its getter 0x0012580c)
 constexpr u32 GAME_MENU_OPEN = 0x04;       // u8: the START menu is up (in towns and quests alike)
 constexpr u32 GAME_MENU_WINDOWS = 0x1e;    // u16: bits 0-3
-constexpr u32 HUD_MENU_PANEL = 0x01083858; // u8 (0x00b89288 reads it)
+constexpr GuestAddr HUD_MENU_PANEL{0x01083858}; // u8 (0x00b89288 reads it)
 constexpr u32 GAME_CONTROL_MODE = 0x2b;    // u8: 1 a quest, 2 a town, 3 the Arena's equipment
 // Whether the weapon is out: a byte of the hunter's state object ([hunter+0xe30], the one camera.md
 // calls its input object), which the hunter's virtual 50 (0x00b2a598) sets and 0x00b084d0 tests for 1
@@ -1987,13 +1999,13 @@ u32 CallGame(RCtx* ctx, u32 function, std::initializer_list<u32> args) {
 constexpr u32 HUNTER_ITEMS = 0xa29c;        // the hunter's item info*
 constexpr u32 ITEMS_SLOT = 0x584;           // u16: the selected pouch slot
 constexpr u32 ITEMS_TURN = 0x589;           // u8: bit 1 turned left, bit 2 right (the bar's animation)
-constexpr u32 FN_ITEM_NEXT = 0x00b31fa4;    // (hunter, slot, 0 left / 1 right): the next slot with an item
-constexpr u32 FN_IS_LOCAL = 0x00d04f6c;     // (hunter): nonzero for this console's hunter
-constexpr u32 FN_PLAY_SOUND = 0x00312928;   // (the sound manager, sound)
+constexpr GuestAddr FN_ITEM_NEXT{0x00b31fa4};    // (hunter, slot, 0 left / 1 right): the next slot with an item
+constexpr GuestAddr FN_IS_LOCAL{0x00d04f6c};     // (hunter): nonzero for this console's hunter
+constexpr GuestAddr FN_PLAY_SOUND{0x00312928};   // (the sound manager, sound)
 constexpr u32 SOUND_MANAGER = 0x00fccd6c;   // its pointer
 constexpr u32 SOUND_ITEM_TURN = 7;
-constexpr u32 FN_HOLDER_ASK = 0x006b3fe0;   // (holder, 5): nonzero, no item now
-constexpr u32 FN_HOLDER_ENDING = 0x006b3c84;  // (holder): nonzero, no item now
+constexpr GuestAddr FN_HOLDER_ASK{0x006b3fe0};   // (holder, 5): nonzero, no item now
+constexpr GuestAddr FN_HOLDER_ENDING{0x006b3c84};  // (holder): nonzero, no item now
 constexpr u32 STATE_MODE = 0x371;           // u8 of the hunter's state object: 8 and 9, and 6 with
 constexpr u32 STATE_MODE_ACTION = 0x372;    //   u16 0x1a here, close the bar; 0 with 0x78 or 0x79 too
 constexpr s64 ITEM_STEP_KEEP = 600'000'000; // ns a step the hunter can't take now waits (a swing, a roll)
@@ -2098,12 +2110,12 @@ constexpr u32 STATE_REST_MODE = 0x370;         // u8 of the hunter's state objec
 constexpr u16 ACTION_NEUTRAL = 0x00, ACTION_NEUTRAL_MOVING = 0x18;  // (mode 0: standing, and walking)
 constexpr u16 ACTION_FLEX = 0x57;              // (mode 0) the flex after a drink
 constexpr u16 ACTION_SHARPEN = 0x5a;           // (mode 0) sharpening with a whetstone
-constexpr u32 FN_SET_ACTION = 0x00b1d764;      // (hunter, mode, 4, 0; a fifth argument on the stack, 0): the mode's
+constexpr GuestAddr FN_SET_ACTION{0x00b1d764};      // (hunter, mode, 4, 0; a fifth argument on the stack, 0): the mode's
                                                // neutral action, as their patches end the flex or the sharpening
-constexpr u32 FN_FACE_STICK = 0x00b3d0d8;      // (hunter): turn to the circle pad (their patch, when it is pushed)
-constexpr u32 FN_AFTER_SET_ACTION = 0x00b67070;  // (hunter): their patch's call after FN_SET_ACTION
-constexpr u32 FN_ROLL_REFUSED = 0x00b185c8;    // (hunter): nonzero where the hunter can't roll now
-constexpr u32 FN_ROLL = 0x00b0d734;            // (hunter): the roll
+constexpr GuestAddr FN_FACE_STICK{0x00b3d0d8};      // (hunter): turn to the circle pad (their patch, when it is pushed)
+constexpr GuestAddr FN_AFTER_SET_ACTION{0x00b67070};  // (hunter): their patch's call after FN_SET_ACTION
+constexpr GuestAddr FN_ROLL_REFUSED{0x00b185c8};    // (hunter): nonzero where the hunter can't roll now
+constexpr GuestAddr FN_ROLL{0x00b0d734};            // (hunter): the roll
 // The gathering actions (mode 0): carving, gathering, mining and catching bugs (their patch's table of actions)
 constexpr u16 GATHER_ACTIONS[] = {0x4d, 0x4e, 0x51, 0x52, 0x53, 0x54, 0x8f, 0x90, 0x94, 0x95, 0x96, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac};
 bool qol_gathering = false;     // the hunter was gathering with a button held (their patch's first flag)
@@ -2348,8 +2360,8 @@ void UpdateGameState(RCtx* ctx) {
             s.action = rd16(ctx, hunter + HUNTER_ACTION);
             if (options.trace_panels) {  // (what tells a window over the hunt: the HUD's state, the hunter's +0x54c)
                 static u32 last = ~0u;
-                const u32 key = hud | rd8(ctx, hunter + 0x54c) << 8 | rd8(ctx, 0x0108b9c0) << 16 |
-                                (rd16(ctx, 0x0108b9da) & 0xf) << 20 | rd8(ctx, 0x01083858) << 24;
+                const u32 key = hud | rd8(ctx, hunter + 0x54c) << 8 | rd8(ctx, GAME_MENU + 4) << 16 |
+                                (rd16(ctx, GAME_MENU + 0x1e) & 0xf) << 20 | rd8(ctx, HUD_MENU_PANEL) << 24;
                 if (key != last) {
                     LogInfo("state: frame {} hud {} hunter+54c {} menu bytes {} {} {} action {:04X}", s.frame, hud,
                             key >> 8 & 0xff, key >> 16 & 0xf, key >> 20 & 0xf, key >> 24, s.action);

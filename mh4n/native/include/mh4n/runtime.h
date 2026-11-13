@@ -44,6 +44,7 @@
 #include <vector>
 
 #include "mh4n/clock.h"
+#include "mh4n/guest_addr.h"
 #include "mh4n/cpu.h"
 #include "mh4n/gpu.h"
 #include "mh4n/host.h"
@@ -61,7 +62,8 @@ namespace mh4n {
 
 // The game's frame counter (a u32 in the game's memory): the frame watcher reads it at every safe
 // point of the scheduler. Programs that do not map this address have no frames.
-inline constexpr u32 kFrameCounterAddress = 0x010571d4;
+inline constexpr u32 kFrameCounterAddress = 0x010571d4;  // (the update's; FrameCounterAddress() is the running code's)
+inline u32 FrameCounterAddress() { return guest::Map(kFrameCounterAddress); }
 
 // The memory mode Prepare uses unless it is given one: Dev1, the mode of ELF test programs.
 inline constexpr u32 kPrepareMemoryMode = 2;

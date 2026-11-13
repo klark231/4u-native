@@ -9,6 +9,17 @@
 
 extern "C" {
 #include "recomp.h"
+#if __has_include("mh4n/guest_addr.h")
+#include "mh4n/guest_addr.h"
+#else
+namespace mh4n::guest {
+struct Addr {
+    std::uint32_t stock;
+    operator std::uint32_t() const { return stock; }
+};
+}  // namespace mh4n::guest
+#endif
+using GuestAddr = mh4n::guest::Addr;  // a fixed address of the update's, as the code the game runs has it
 }
 
 namespace Port::Keyboard {
@@ -17,7 +28,7 @@ namespace {
 
 // USA v1.3.0 (docs/research/keyboard.md). The keyboard, sSoftwareKeyboard (DTI 0x010bd030), made on first use by
 // sGameControl (0x002b5e28) and kept for good.
-constexpr u32 SKBD_INSTANCE = 0x0104deb4;   // sSoftwareKeyboard*
+constexpr GuestAddr SKBD_INSTANCE{0x0104deb4};   // sSoftwareKeyboard*
 // its configuration, a copy of the 3DS's SwkbdConfig at +0x1c (the fields up to the hint where the 3DS has them)
 constexpr u32 KBD_TYPE = 0x1c;              // u32: 0 normal, 1 QWERTY, 2 number pad, 3 western
 constexpr u32 KBD_BUTTONS = 0x20;           // u32: buttons minus one (3 none)
@@ -36,9 +47,9 @@ constexpr u32 TM_CURSOR = 0x14;             // u32
 constexpr u32 LM_FONT = 0x24;               // nSwkbd::LineManager: the font that lays the lines out (set once the text
                                             // area is made, a frame or two after the keyboard opens)
 // functions
-constexpr u32 TM_SET_TEXT = 0x00666d8c;     // TextManager::setText(this, const u16* text, int length): cursor at 0
-constexpr u32 LM_FIND_LINE = 0x006654b4;    // LineManager::findLine(this, int position): the cursor's line
-constexpr u32 KBD_FINISH = 0x003ae264;      // sSoftwareKeyboard::finish(this, bool decided, int button): what a
+constexpr GuestAddr TM_SET_TEXT{0x00666d8c};     // TextManager::setText(this, const u16* text, int length): cursor at 0
+constexpr GuestAddr LM_FIND_LINE{0x006654b4};    // LineManager::findLine(this, int position): the cursor's line
+constexpr GuestAddr KBD_FINISH{0x003ae264};      // sSoftwareKeyboard::finish(this, bool decided, int button): what a
                                             // dialog button does (the return code, the text for the game, closing)
 constexpr u32 KBD_SPARE = 0x38;             // the text box's room beyond max_length
 

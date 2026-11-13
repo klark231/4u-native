@@ -236,7 +236,8 @@ def code_size(header: exh.ExHeader, code: bytes) -> int:
 def recompile(img: Image, entries: dict[int, str], out: str, log=print,
               data_segments: list[tuple[int, int]] | None = None, title_id: int = 0,
               hooks: dict[int, str] | None = None,
-              tunables: dict[int, tuple[int, str]] | None = None) -> dict:
+              tunables: dict[int, tuple[int, str]] | None = None,
+              guest: list[tuple[int, int]] | None = None) -> dict:
     """`hooks`: function entries native code may wrap or replace (see RHookFn in recomp.h);
     each must also be an entry point. `tunables`: instructions whose immediate (the given
     original value) the host can change at run time (rc_tunables in recomp.h)."""
@@ -318,6 +319,10 @@ def recompile(img: Image, entries: dict[int, str], out: str, log=print,
               "const char *const rc_hook_names[] = {" + (", ".join(f'"{hooks[a]}"' for a in hook_addrs) or "0") + "};",
               f"const u32 rc_hook_count = {len(hook_addrs)};",
               f"RHookFn rc_hooks[{max(1, len(hook_addrs))}];",
+              "/* the app's own addresses (config/guest_addrs.txt) where this code has them: from, to; sorted by from */",
+              "const u32 rc_guest_from[] = {" + (", ".join(f"0x{a:08x}u" for a, _ in sorted(guest or [])) or "0") + "};",
+              "const u32 rc_guest_to[] = {" + (", ".join(f"0x{b:08x}u" for _, b in sorted(guest or [])) or "0") + "};",
+              f"const u32 rc_guest_count = {len(guest or [])};",
               "/* tunables (config/tunables.txt): immediates the host may change, RCodeInfo.tunables */",
               "u32 rc_tunables[] = {" + (", ".join(f"0x{tunables[a][0] & 0xFFFFFFFF:08x}u" for a in tunable_addrs) or "0") + "};",
               "const u32 rc_tunable_addrs[] = {" + (", ".join(f"0x{a:08x}u" for a in tunable_addrs) or "0") + "};",

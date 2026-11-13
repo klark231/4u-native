@@ -514,7 +514,7 @@ void Runtime::PollFrame() {
     }
     // (memory_->Read<u32>(kFrameCounterAddress), with the mapping looked up again only when it changed)
     if (const u64 changes = memory_->MapChanges(); changes != frame_map_changes_ || memory_.get() != frame_memory_) {
-        frame_counter_ = memory_->IsMapped(kFrameCounterAddress, sizeof(u32)) ? memory_->Base() + kFrameCounterAddress
+        frame_counter_ = memory_->IsMapped(FrameCounterAddress(), sizeof(u32)) ? memory_->Base() + FrameCounterAddress()
                                                                               : nullptr;
         frame_memory_ = memory_.get();
         frame_map_changes_ = changes;

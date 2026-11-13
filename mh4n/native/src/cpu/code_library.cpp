@@ -18,6 +18,7 @@
 
 #include "callbacks.h"
 #include "mh4n/cpu.h"
+#include "mh4n/guest_addr.h"
 #include "mh4n/crc32.h"
 #include "recomp_c.h"  // last: it defines macros
 
@@ -169,6 +170,9 @@ std::unique_ptr<CodeLibrary> CodeLibrary::Load(const std::string& path, bool det
                                 "size): rebuild it with this version's tools",
                                 path));
     }
+
+    // where the app's own addresses are in this library's code (config/guest_addrs.txt): before any guest code runs
+    mh4n::guest::Set(info->guest_from, info->guest_to, info->guest_count);
 
     std::unique_ptr<CodeLibrary> library(new CodeLibrary());
     library->path_ = path;
