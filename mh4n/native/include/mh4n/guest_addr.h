@@ -32,6 +32,18 @@ inline std::uint32_t Map(std::uint32_t stock) {
     return (it != end && *it == stock) ? g_table.to[it - begin] : stock;
 }
 
+// The other way: the update's address of one the running code has, for a value read from the game's memory that
+// is compared with the update's (a vtable: `switch (Stock(rd32(ctx, object)))` with the update's as the cases).
+// One with no pair is returned as it is.
+inline std::uint32_t Stock(std::uint32_t running) {
+    for (std::uint32_t i = 0; i < g_table.count; ++i) {
+        if (g_table.to[i] == running) {
+            return g_table.from[i];
+        }
+    }
+    return running;
+}
+
 // A fixed address of the update's, looked up where it is used: `constexpr Addr QUEST_HUD{0x0108260c};`
 // reads as the u32 it stands for in the code the game runs.
 struct Addr {

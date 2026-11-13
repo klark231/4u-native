@@ -321,6 +321,7 @@ def match_functions(src: Image, dst: Image, funcs: list[Function]) -> tuple[dict
 
 def build_shifts(src: Image, dst: Image, funcs: list[Function]) -> tuple[Shifts, dict]:
     mapped, report = match_functions(src, dst, funcs)
+    report["mapped_map"] = mapped
     funcs = sorted(funcs, key=lambda f: f.addr)
     intervals: list[tuple[int, int, int]] = []
     cur: list[int] | None = None   # [start, end, shift]
@@ -341,6 +342,120 @@ def build_shifts(src: Image, dst: Image, funcs: list[Function]) -> tuple[Shifts,
         intervals.append(tuple(cur))
     report["intervals"] = len(intervals)
     return Shifts(intervals, (src.base, src.text_end)), report
+
+
+# ── finding what the exact match could not ─────────────────────────────────
+# A function the other build changed (a patch, a different compiler run) has no byte-for-byte twin, so
+# match_functions leaves it out. The functions around it still map, which says where it must be: between
+# the places its neighbours went. Inside that gap the best-looking stretch is searched for, comparing
+# words with the parts that move with the code (branch offsets, PC-relative loads) set aside.
+
+RESCUE_MIN_SCORE = 0.55     # the share of words that must be the same
+RESCUE_MARGIN = 0.08        # over the next best place, so a look-alike is not taken for it
+RESCUE_MAX_WINDOW = 0x30000
+RESCUE_MAX_SIZE = 0x2000
+
+
+def _mask_arm(w: int) -> int:
+    if (w & 0x0E000000) == 0x0A000000:            # B, BL, BLX: the offset moves
+        return w & 0xFF000000
+    if (w & 0x0E5F0000) == 0x041F0000:            # LDR rd, [pc, #imm]: the literal moves
+        return w & 0xFFFFF000
+    return w
+
+
+def _mask_thumb(h: int) -> int:
+    if (h & 0xF800) in (0xF000, 0xF800):          # halves of BL/BLX
+        return h & 0xF800
+    if (h & 0xF800) == 0x4800:                    # LDR rd, [pc, #imm]
+        return h & 0xFF00
+    if (h & 0xF000) == 0xD000 or (h & 0xF800) == 0xE000:   # conditional / plain B
+        return h & 0xFF00 if (h & 0xF000) == 0xD000 else h & 0xF800
+    return h
+
+
+def _masked(code: bytes, off: int, count: int, thumb: bool) -> list[int]:
+    if thumb:
+        return [_mask_thumb(h) for h in struct.unpack_from(f"<{count}H", code, off)]
+    return [_mask_arm(w) for w in struct.unpack_from(f"<{count}I", code, off)]
+
+
+def rescue_one(src: Image, dst: Image, mapped: dict[int, int], mapped_sizes: dict[int, int],
+               starts: list[int], addr: int, size: int, thumb: bool) -> tuple[int, float] | None:
+    """(destination address, share of equal words) of the function at `addr` of the source, found in the
+    gap its mapped neighbours leave, or None when nothing is clearly it."""
+    size = max(8, min(size, RESCUE_MAX_SIZE)) & ~(1 if thumb else 3)
+    unit = 2 if thumb else 4
+    i = bisect.bisect_left(starts, addr)
+    before = starts[i - 1] if i > 0 else None
+    after = starts[i] if i < len(starts) and starts[i] != addr else (starts[i + 1] if i + 1 < len(starts) else None)
+    lo = mapped[before] + mapped_sizes[before] if before is not None else dst.base
+    hi = mapped[after] if after is not None else dst.text_end
+    lo -= 0x40                                     # the neighbour may have grown or shrunk
+    lo = max(lo, dst.base)
+    if hi - lo > RESCUE_MAX_WINDOW or hi <= lo:
+        centre = (mapped[before] + (addr - before)) if before is not None else addr
+        lo, hi = max(dst.base, centre - 0x4000), min(dst.text_end, centre + 0x4000 + size)
+    so = addr - src.base
+    if so < 0 or so + size > len(src.code):
+        return None
+    want = _masked(src.code, so, size // unit, thumb)
+    n = len(want)
+    lo += (-(lo - dst.base)) % unit
+    last = hi - size // 2 if hi - size // 2 > lo else hi
+    last = min(last, dst.text_end - size)
+    if last < lo:
+        return None
+    base_off = lo - dst.base
+    span = (last - lo) // unit + n
+    window = _masked(dst.code, base_off, span, thumb)
+    scores: list[tuple[float, int]] = []
+    probe = min(n, 16)
+    need = probe * 0.3
+    for k in range(0, (last - lo) // unit + 1):
+        hit = 0
+        for j in range(probe):
+            if window[k + j] == want[j]:
+                hit += 1
+        if hit < need:
+            continue
+        hit = 0
+        for j in range(n):
+            if window[k + j] == want[j]:
+                hit += 1
+        scores.append((hit / n, lo + k * unit))
+    if not scores:
+        return None
+    scores.sort(reverse=True)
+    best, best_at = scores[0]
+    second = next((sc for sc, at in scores[1:] if abs(at - best_at) >= size // 2), 0.0)
+    if best < RESCUE_MIN_SCORE or best - second < RESCUE_MARGIN:
+        return None
+    return best_at, best
+
+
+def rescue(src: Image, dst: Image, funcs: list[Function], mapped: dict[int, int],
+           wanted: list[int]) -> dict[int, tuple[int, float]]:
+    """For each wanted source address that is the start of a function: where the matching stretch of the
+    destination starts, and how well it matches."""
+    funcs = sorted(funcs, key=lambda f: f.addr)
+    by_addr = {f.addr: f for f in funcs}
+    mapped_sizes = {a: by_addr[a].size for a in mapped if a in by_addr}
+    starts = sorted(mapped)
+    out: dict[int, tuple[int, float]] = {}
+    fstarts = [f.addr for f in funcs]
+    for a in wanted:
+        f = by_addr.get(a)
+        if f is not None:
+            size, thumb = f.size, f.thumb
+        else:   # not in the list: up to the next listed function
+            j = bisect.bisect_right(fstarts, a)
+            size = (fstarts[j] - a) if j < len(fstarts) else 0x400
+            size, thumb = max(0x20, min(size, 0x1000)), False
+        r = rescue_one(src, dst, mapped, mapped_sizes, starts, a, size, thumb)
+        if r is not None:
+            out[a] = r
+    return out
 
 
 def _gap_same(src: Image, dst: Image, start: int, end: int, d: int) -> bool:

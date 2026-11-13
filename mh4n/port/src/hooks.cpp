@@ -32,6 +32,9 @@
 // (RC_PAGED for Azahar's page table, flat otherwise: see tools/recomp/runtime/recomp.h).
 extern "C" {
 #include "recomp.h"
+}
+// (outside extern "C": inside it, the table of guest_addr.h would be a C-linkage variable of this file's own, never
+// set by the code library's loader, and every address below the update's even in a code mod's game)
 #if __has_include("mh4n/guest_addr.h")
 #include "mh4n/guest_addr.h"
 #else
@@ -40,10 +43,12 @@ struct Addr {
     std::uint32_t stock;
     operator std::uint32_t() const { return stock; }
 };
+inline std::uint32_t Stock(std::uint32_t running) { return running; }
 }  // namespace mh4n::guest
 #endif
 using GuestAddr = mh4n::guest::Addr;  // a fixed address of the update's, as the code the game runs has it
-}
+// The update's address of a vtable (or any address) read from the game's memory, to compare with the update's
+inline std::uint32_t StockAddr(std::uint32_t running) { return mh4n::guest::Stock(running); }
 
 namespace Port::Hooks {
 
@@ -832,10 +837,23 @@ u32 WideRows() {
 }
 
 /// nDraw::Scene::Scene(this, params): params {columns, rows, ...}; the main scene target.
+/// The first calls of the wide render's hooks, logged with what they were given (a code mod's game may set its
+/// targets up otherwise): which ones run, and with what.
+void LogWideCall(const char* what, u32 a, u32 b, bool widened) {
+    static int logged = 0;
+    if (WideRows() != 0 && logged < 24) {
+        ++logged;
+        LogInfo("wide render: {} {}x{}{}", what, a, b, widened ? ", widened" : "");
+    }
+}
+
 void SceneCtor(RCtx* ctx, RFunc original) {
     const u32 rows = WideRows();
     const u32 params = ctx->r[1];
-    if (rows && rd32(ctx, params) == LCD_COLUMNS && rd32(ctx, params + 4) == TOP_ROWS) {
+    const u32 columns0 = rd32(ctx, params), rows0 = rd32(ctx, params + 4);
+    const bool widen = rows && columns0 == LCD_COLUMNS && rows0 == TOP_ROWS;
+    LogWideCall("nDraw::Scene", columns0, rows0, widen);
+    if (widen) {
         wr32(ctx, params + 4, rows);
         LogInfo("wide render: scene target {}x{}", rows, LCD_COLUMNS);
     }
@@ -846,7 +864,9 @@ void SceneCtor(RCtx* ctx, RFunc original) {
 /// Azahar's LCD then has to show that many rows.
 void DisplayBufferInit(RCtx* ctx, RFunc original) {
     const u32 rows = WideRows();
-    if (rows && ctx->r[1] == LCD_COLUMNS && ctx->r[2] == TOP_ROWS) {
+    const bool widen = rows && ctx->r[1] == LCD_COLUMNS && ctx->r[2] == TOP_ROWS;
+    LogWideCall("nDraw::DisplayBuffer::init", ctx->r[1], ctx->r[2], widen);
+    if (widen) {
         ctx->r[2] = rows;
         P().SetTopScreenRows(rows);
     }
@@ -1790,7 +1810,7 @@ double filters_since = 0;
 
 /// render(this, cDraw*) of a screen filter class.
 void FilterRender(RCtx* ctx, RFunc original) {
-    const u32 vtable = rd32(ctx, ctx->r[0]);
+    const u32 vtable = StockAddr(rd32(ctx, ctx->r[0]));
     for (u32 i = 0; i < std::size(SCREEN_FILTERS); ++i) {
         if (SCREEN_FILTERS[i].vtable != vtable) {
             continue;
@@ -1946,7 +1966,7 @@ u32 LocalHunter(RCtx* ctx, int* weapon) {
     if (!HeapPointer(hunter)) {
         return 0;
     }
-    const u32 vtable = rd32(ctx, hunter);
+    const u32 vtable = StockAddr(rd32(ctx, hunter));
     for (int i = 0; i < 15; ++i) {
         if (WEAPON_VTABLES[i] != 0 && WEAPON_VTABLES[i] == vtable) {
             *weapon = i;
@@ -1978,6 +1998,9 @@ bool GameMenuOpen(RCtx* ctx) {
 
 /// Calls a game function with up to four arguments, the caller's registers and flags kept; returns its r0.
 u32 CallGame(RCtx* ctx, u32 function, std::initializer_list<u32> args) {
+    if (function == 0) {
+        return 0;  // a function of the update's the running code doesn't have (tools/guest_map.py): not called
+    }
     u32 regs[16];
     std::copy(std::begin(ctx->r), std::end(ctx->r), regs);
     const u32 flags[4] = {ctx->fn, ctx->fz, ctx->fc, ctx->fv};
@@ -2319,13 +2342,13 @@ void UpdateGameState(RCtx* ctx) {
     const u32 areas = rd32(ctx, SAREA_INSTANCE);
     const u32 count = HeapPointer(areas) ? rd32(ctx, areas + AREA_COUNT) : 0;
     const u32 top = count >= 1 && count <= 8 ? rd32(ctx, areas + AREA_TABLE + 4 * (count - 1)) : 0;
-    const u32 scene = HeapPointer(top) ? rd32(ctx, top) : 0;
+    const u32 scene = HeapPointer(top) ? StockAddr(rd32(ctx, top)) : 0;
     bool hold = false;  // between areas: the menu as it was
     switch (scene) {
     case VT_AVILLAGE: {
         s.place = GameState::PLACE_TOWN;
         const u32 lobby = rd32(ctx, LOBBY);
-        if (HeapPointer(lobby) && rd32(ctx, lobby) == VT_CLBMAIN) {
+        if (HeapPointer(lobby) && StockAddr(rd32(ctx, lobby)) == VT_CLBMAIN) {
             s.town_panel = rd8(ctx, lobby + LOBBY_PANEL);
             // The lobby's byte stays 1 after a gesture is done and the Gestures menu closed, until the hunter moves:
             // not a menu. Only on that way out of the touch screen's three menus (Guild Cards 5, Gestures 8, Friends

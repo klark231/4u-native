@@ -9,6 +9,9 @@
 
 extern "C" {
 #include "recomp.h"
+}
+// (outside extern "C": inside it, the table of guest_addr.h would be a C-linkage variable of this file's own, never
+// set, and every address below the update's even in a code mod's game)
 #if __has_include("mh4n/guest_addr.h")
 #include "mh4n/guest_addr.h"
 #else
@@ -20,7 +23,6 @@ struct Addr {
 }  // namespace mh4n::guest
 #endif
 using GuestAddr = mh4n::guest::Addr;  // a fixed address of the update's, as the code the game runs has it
-}
 
 namespace Port::Keyboard {
 

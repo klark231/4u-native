@@ -295,6 +295,49 @@ TEST_CASE("calls made by interpreted code are interpreted, and the stack comes b
     CHECK(m.Ctx().r[15] == kReturn);
 }
 
+// A recompiled function, as the library would have it: r0 += 40, then back to LR (r15, as GuestFunction says).
+void NativeAddForty(RCtx* ctx) {
+    ctx->r[0] += 40;
+    ctx->r[15] = ctx->r[14];
+}
+
+TEST_CASE("a call or a jump from interpreted code to a recompiled function runs it natively") {
+    Machine m;
+    constexpr mh4n::u32 kNative = kCode + 0x100;
+    m.interp->SetNativeLookup([](mh4n::u32 target) -> GuestFunction {
+        return target == kNative ? NativeAddForty : nullptr;
+    });
+    m.Write32(kNative, {0xE7F000F0});                              // udf: interpreting it would fail
+    m.Write32(kCode, {0xE92D4010,                                  // push {r4, lr}
+                      0xE3A00001,                                  // mov r0, #1
+                      0xEB00003C,                                  // bl kNative
+                      0xE2800001,                                  // add r0, r0, #1
+                      0xE8BD8010});                                // pop {r4, pc}
+    m.Call(kCode, kReturn);
+    REQUIRE(m.finished);
+    CHECK(m.Ctx().r[0] == 42);
+    CHECK(m.Ctx().r[13] == kStack);
+    CHECK(m.Ctx().r[15] == kReturn);
+    CHECK(m.interp->NativeCallCount() == 1);
+    CHECK(m.interp->InstructionCount() == 5);  // the recompiled function's are not the interpreter's
+    CHECK(m.interp->Entries() == std::vector<mh4n::u32>{kCode});
+
+    // a tail call (b) to it: it returns to the interpreted function's own caller, which ends the call
+    Machine t;
+    t.interp->SetNativeLookup([](mh4n::u32 target) -> GuestFunction {
+        return target == kNative ? NativeAddForty : nullptr;
+    });
+    t.Write32(kNative, {0xE7F000F0});
+    t.Write32(kCode, {0xE3A00002,                                  // mov r0, #2
+                      0xEA00003D});                                // b kNative
+    t.Call(kCode, kReturn);
+    REQUIRE(t.finished);
+    CHECK(t.Ctx().r[0] == 42);
+    CHECK(t.Ctx().r[15] == kReturn);
+    CHECK(t.interp->NativeCallCount() == 1);
+    CHECK(t.interp->InstructionCount() == 2);
+}
+
 TEST_CASE("Thumb entries, Thumb returns, and the exchange between the states") {
     Machine m;
     m.Write16(kCode, {0x2007,    // movs r0, #7
