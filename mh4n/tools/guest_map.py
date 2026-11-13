@@ -55,7 +55,8 @@ def data_votes(src_header, src_code: bytes, dst_header, dst_code: bytes, shifts)
 
 def build(src_header, src_code, dst_header, dst_code, shifts, rescued: dict, wanted: list) -> tuple[list, list[str]]:
     """[(address in the update, address in the mod's code)] for what config/guest_addrs.txt lists, and
-    the lines to print. What has no sure place is left out (the app then uses the update's address)."""
+    the lines to print. A variable with no sure place is left out (the app then uses the update's address); a
+    function with none is paired with 0 (the app then doesn't call it)."""
     report, pairs = [], []
     votes = data_votes(src_header, src_code, dst_header, dst_code, shifts)
     evidence = sorted(votes)
@@ -87,6 +88,12 @@ def build(src_header, src_code, dst_header, dst_code, shifts, rescued: dict, wan
                         how = "its neighbours move differently"
                 else:
                     how = "no pool word near it"
+        if to is None and kind == "fn":
+            # the app must not call into the middle of whatever is at the update's address in this code: 0 tells it
+            # the function is not there (hooks.cpp CallGame leaves the call out, and with it what needs it)
+            report.append(f"  warning: {name} 0x{addr:08x} not placed in the mod's code ({how}): the app won't call it")
+            pairs.append((addr, 0))
+            continue
         if to is None:
             report.append(f"  warning: {name} 0x{addr:08x} not placed in the mod's code ({how}): the app uses 0x{addr:08x}")
             continue

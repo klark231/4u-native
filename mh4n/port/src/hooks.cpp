@@ -1998,6 +1998,9 @@ bool GameMenuOpen(RCtx* ctx) {
 
 /// Calls a game function with up to four arguments, the caller's registers and flags kept; returns its r0.
 u32 CallGame(RCtx* ctx, u32 function, std::initializer_list<u32> args) {
+    if (function == 0) {
+        return 0;  // a function of the update's the running code doesn't have (tools/guest_map.py): not called
+    }
     u32 regs[16];
     std::copy(std::begin(ctx->r), std::end(ctx->r), regs);
     const u32 flags[4] = {ctx->fn, ctx->fz, ctx->fc, ctx->fv};
