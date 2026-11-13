@@ -38,6 +38,11 @@ Talk with other players and ask for help in the community's [Discord](https://di
   stick, which lights up, and lift it there: the run locks and the hunter keeps running, steered with the camera, until you
   touch the stick or the circle again, draw your weapon or open a menu. To run only while you hold a button instead: gear,
   **Controls**, **Buttons on the screen**, turn off **Run with the stick**, and a **Run** button shows
+- **Traditional layout:** gear, **Controls**, **Touch layout**, **Traditional**. Instead of the controls changing with what you
+  do (the pill, the menus', the bows' and bowguns'), you get an emulator's: A, B, X and Y in a diamond on the right, L, R, ZL and
+  ZR at the top corners, START and SELECT at the top, the d-pad above the stick, always the same. It has its own places
+  (**Customize controls and HUD**) and its own **Buttons on the screen**; the stick runs only with **Run with the stick**,
+  otherwise hold R. Going back to **Adaptive** keeps both
 - **Lock-on:** hold the camera button (L)
 - **Item bar without the D-pad:** tap the game's item bar to use the item, swipe it to change the item
 - **Bows and bowguns** get a layout of their own: a large fire button, reload, aim, crouching fire or coatings, and arrows
@@ -301,9 +306,12 @@ server on the internet, it sees your IP address.
 
 ### Hub servers (instead of a room)
 
-Gear, **Multiplayer**, **Hub servers**, **Use hub servers** plays through an MHGU hub server, which some find steadier than a
-room. Everyone in the group uses the same servers, game and key; only MH4U (USA, EUR) and MH4G (JPN, KOR) players see these
-hubs, never MHGU's or MHXX's. By default it uses the two public servers MHGU uses. How it works: [docs/hub-link.md](docs/hub-link.md).
+Gear, **Multiplayer**, **Hub servers**, **Use hub servers** plays through a hub server, which some find steadier than a
+room. Everyone in the group uses the same servers and key; players of every region (USA, EUR, JPN, KOR) see each other's hubs,
+never MHGU's or MHXX's. They are on by default: the game's Local Play finds hubs with nothing to press (**Stop using hub servers** turns them off). **Server 1** is `http://meoli.viewdns.net` by default and can be changed; **Server 2** is blank.
+**Crossplay** (same section) lets hub servers and a Citra/Azahar room work together, as in MHGU: join a room and the hubs stay; a hub you
+create in the game is in the room too. Off: hub servers only, and a room you join replaces them.
+How it works: [docs/hub-link.md](docs/hub-link.md).
 
 ## Samsung: Game Booster
 
@@ -315,6 +323,15 @@ adb install -r -i com.mh4u.native MH4U-<version>.apk
 ```
 
 Use the name of the APK you downloaded. It's optional: the game runs the same without it.
+
+### Other package names
+
+Some phones' performance modes know an app by its package name. Every release has the same app under three more:
+`MH4U-<version>-antutu.apk` (`com.antutu.ABenchMark`), `MH4U-<version>-ludashi.apk` (`com.ludashi.benchmark`) and
+`MH4U-<version>-alt.apk` (`com.mh4u.native.alt`, a second install beside the usual one). Only the package name and the app's
+name change. Each package keeps its own folder in `Android/data` (its saves and settings too), so they don't share them, and
+the antutu and ludashi ones can't be installed over the real benchmark apps. Use the name of the one you install in the
+`adb install -i` line above.
 
 ## If something goes wrong
 

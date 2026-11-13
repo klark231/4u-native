@@ -114,6 +114,8 @@ struct Client::Impl {
     std::string hub_family;                 // the family in use ("MH4U" / "MH4G")
     std::string hub_problem;                // why hub servers cannot be used (a sentence)
     bool hub_mode = false;                  // JoinHubs was asked: Joining, Joined, or not startable
+    MacAddress hub_mac{};                   // the console's address on the hubs (a room joined with keep_hubs is asked for it)
+    std::string hub_host;                   // the servers, as the status shows them while hubs are all there is
 
     // ---- state, under `mutex` ----
     bool Current(const Session& s) const { return session != nullptr && session->id == s.id; }
@@ -150,6 +152,26 @@ struct Client::Impl {
         room = {};
         mac = {};
         username.clear();
+    }
+
+    // The room's session is over (it ended, failed or was left). Without hub servers that is Idle; with them (crossplay) the
+    // hubs go on, and what the status shows goes back to them.
+    void RoomEnded() {
+        ClearRoom();
+        if (medium != nullptr) {
+            if (session != nullptr) {
+                session->stop = true;
+                leaving.push_back(std::move(session));
+                session.reset();
+            }
+            mac = hub_mac;
+            room.name = "Hub servers";
+            host = hub_host;
+            port = 0;
+            SetState(State::Joined);
+        } else {
+            SetState(State::Idle);
+        }
     }
 
     // Joins the threads of the sessions that finished their goodbye (at once: they are done).
@@ -370,9 +392,10 @@ void Client::Impl::Dispatch(const std::shared_ptr<Session>& s, const ENetPacket*
         return;
     }
     if (ends) {
-        SetState(State::Idle);
-        ClearRoom();
-        MH4N_LOG(Info, kLog, "room {}:{}: {}", host, port, ErrorName(what));
+        const std::string was_host = host;
+        const u16 was_port = port;
+        RoomEnded();
+        MH4N_LOG(Info, kLog, "room {}:{}: {}", was_host, was_port, ErrorName(what));
     }
     Fail(what);
 }
@@ -394,10 +417,11 @@ void Client::Impl::Loop(const std::shared_ptr<Session>& s, ENetHost* host, ENetP
             case ENET_EVENT_TYPE_DISCONNECT: {
                 std::lock_guard lock(mutex);
                 if (Current(*s) && state != State::Idle) {
-                    SetState(State::Idle);
-                    ClearRoom();
+                    const std::string was_host = this->host;
+                    const u16 was_port = port;
+                    RoomEnded();
                     Fail(Error::LostConnection);
-                    MH4N_LOG(Info, kLog, "room {}:{}: the connection was lost", this->host, port);
+                    MH4N_LOG(Info, kLog, "room {}:{}: the connection was lost", was_host, was_port);
                 }
                 return;  // the peer is gone: nothing to say goodbye to
             }
@@ -440,10 +464,11 @@ void Client::Impl::Run(const std::shared_ptr<Session>& s) {
     const auto fail = [this, &s](Error what) {
         std::lock_guard lock(mutex);
         if (Current(*s)) {
-            SetState(State::Idle);
-            ClearRoom();
+            const std::string was_host = host;
+            const u16 was_port = port;
+            RoomEnded();
             Fail(what);
-            MH4N_LOG(Info, kLog, "could not join {}:{}: {}", host, port, ErrorName(what));
+            MH4N_LOG(Info, kLog, "could not join {}:{}: {}", was_host, was_port, ErrorName(what));
         }
     };
     if (!detail::EnsureEnet()) {
@@ -541,13 +566,17 @@ static MacAddress HubMac(const std::string& console_id_hash) {
 void Client::Impl::StartHub(const HubRequest& request, const std::string& console_id_hash) {
     hub::Family family = hub::Family::Mh4u;
     const auto choice = hub::ParseFamilyChoice(request.family).value_or(hub::FamilyChoice::Auto);
-    if (choice == hub::FamilyChoice::Auto) {
+    if (hub::kCrossRegion) {
+        family = hub::Family::Mh4u;  // (every region on one link protocol; the family code below waits for kCrossRegion = false)
+    } else if (choice == hub::FamilyChoice::Auto) {
         const auto found = hub::FamilyOfProgram(game.id);
         if (!found) {
             hub_problem = "This game cannot use hub servers: only MH4U and MH4G can. Set the family by hand if this is MH4G.";
             MH4N_LOG(Warning, kLog, "hub servers: program {:016X} has no family", game.id);
             Fail(Error::UnknownError);
-            SetState(State::Idle);
+            if (session == nullptr && pending == nullptr) {
+                SetState(State::Idle);
+            }
             hub_mode = false;
             return;
         }
@@ -559,13 +588,18 @@ void Client::Impl::StartHub(const HubRequest& request, const std::string& consol
     options.family = family;
     options.servers = hub::ParseServers(request.servers);
     options.key = request.key;
-    options.mac = HubMac(console_id_hash);
+    options.mac = JoinedSession() != nullptr ? mac : HubMac(console_id_hash);  // (a room already joined: its address)
+    hub_mac = options.mac;
     hub_family = hub::FamilyName(family);
     hub_problem.clear();
-    mac = options.mac;
     medium = std::make_unique<hub::Medium>(std::move(options), [this](const WifiPacket& packet) { Invoke(packet); });
     MH4N_LOG(Info, kLog, "using hub servers as {} ({})", hub_family, hub::FormatServers(hub::ParseServers(request.servers)));
-    SetState(State::Joined);
+    if (session == nullptr && pending == nullptr) {  // (no room beside them: the hubs are what the state shows)
+        mac = hub_mac;
+        SetState(State::Joined);
+    } else {
+        Touch();
+    }
 }
 
 bool Client::JoinHubs(const HubRequest& request, std::string* error) {
@@ -581,17 +615,30 @@ bool Client::JoinHubs(const HubRequest& request, std::string* error) {
         }
         return false;
     }
-    Leave();
+    bool keep = false;
+    {
+        std::lock_guard lock(impl_->mutex);
+        keep = request.keep_room && (impl_->session != nullptr || impl_->pending != nullptr);
+    }
+    if (keep) {
+        LeaveHubs();  // (crossplay: the room stays)
+    } else {
+        Leave();
+    }
     std::unique_lock lock(impl_->mutex);
     impl_->ReapLeaving();
+    const bool with_room = impl_->session != nullptr || impl_->pending != nullptr;
     impl_->hub_mode = true;
     impl_->hub_problem.clear();
-    impl_->host = hub::FormatServers(hub::ParseServers(request.servers));
-    impl_->port = 0;
-    impl_->error = Error::None;
-    impl_->ClearRoom();
-    impl_->room.name = "Hub servers";
-    impl_->SetState(State::Joining);
+    impl_->hub_host = hub::FormatServers(hub::ParseServers(request.servers));
+    if (!with_room) {
+        impl_->host = impl_->hub_host;
+        impl_->port = 0;
+        impl_->error = Error::None;
+        impl_->ClearRoom();
+        impl_->room.name = "Hub servers";
+        impl_->SetState(State::Joining);
+    }
     std::string console = request.console_id_hash;
     if (console.empty()) {
         console = impl_->published_console;
@@ -611,7 +658,7 @@ HubStatus Client::GetHubStatus() const {
     std::lock_guard lock(impl_->mutex);
     HubStatus out;
     out.problem = impl_->hub_problem;
-    out.active = impl_->hub_mode && impl_->state != State::Idle;
+    out.active = impl_->hub_mode && (impl_->medium != nullptr || impl_->pending_hub.has_value());
     if (impl_->medium == nullptr) {
         return out;
     }
@@ -661,12 +708,19 @@ bool Client::Join(const JoinRequest& request, std::string* error) {
         }
         return false;
     }
-    Leave();
+    if (request.keep_hubs) {
+        LeaveRoom();  // (crossplay: hub servers in use stay)
+    } else {
+        Leave();
+    }
     std::unique_lock lock(impl_->mutex);
     impl_->ReapLeaving();
     auto s = std::make_shared<Session>();
     s->id = impl_->next_session++;
     s->request = request;
+    if (request.keep_hubs && impl_->medium != nullptr && !request.preferred_mac) {
+        s->request.preferred_mac = impl_->hub_mac;  // (one address for the game on both: the room gives it if it is free)
+    }
     s->console_id_hash = request.console_id_hash;
     impl_->host = request.host;
     impl_->port = request.port;
@@ -711,6 +765,40 @@ void Client::Leave() {
     impl_->ReapLeaving();
 }
 
+void Client::LeaveRoom() {
+    std::lock_guard lock(impl_->mutex);
+    const bool had_room = impl_->session != nullptr || impl_->pending != nullptr;
+    impl_->pending.reset();
+    if (!impl_->pending_hub.has_value()) {
+        impl_->waiting_for_console = false;
+    }
+    if (impl_->session != nullptr) {
+        impl_->session->stop = true;
+        impl_->leaving.push_back(std::move(impl_->session));
+        impl_->session.reset();
+    }
+    if (had_room && impl_->state != State::Idle) {
+        impl_->RoomEnded();
+    }
+    impl_->ReapLeaving();
+}
+
+void Client::LeaveHubs() {
+    std::unique_ptr<hub::Medium> medium;  // (destroyed after the lock is let go)
+    std::lock_guard lock(impl_->mutex);
+    medium = std::move(impl_->medium);
+    impl_->pending_hub.reset();
+    impl_->hub_mode = false;
+    if (impl_->pending == nullptr) {
+        impl_->waiting_for_console = false;
+    }
+    if (impl_->session == nullptr && impl_->pending == nullptr && impl_->state != State::Idle) {
+        impl_->SetState(State::Idle);  // (no room: nothing is left)
+        impl_->ClearRoom();
+    }
+    impl_->Touch();
+}
+
 bool Client::WaitJoined(int timeout_ms) {
     std::unique_lock lock(impl_->mutex);
     impl_->changed.wait_for(lock, std::chrono::milliseconds(timeout_ms),
@@ -724,6 +812,7 @@ Status Client::GetStatus() const {
     status.state = impl_->state;
     status.error = impl_->error;
     status.waiting_for_console = impl_->waiting_for_console;
+    status.room_session = impl_->session != nullptr || impl_->pending != nullptr;
     status.host = impl_->host;
     status.port = impl_->port;
     status.nickname = impl_->nickname;
@@ -818,15 +907,18 @@ void Client::PublishConsole(const std::string& console_id_hash) {
     if (impl_->pending_hub && !console_id_hash.empty()) {
         const HubRequest request = *impl_->pending_hub;
         impl_->pending_hub.reset();
-        impl_->waiting_for_console = false;
-        impl_->StartHub(request, console_id_hash);
+        impl_->waiting_for_console = impl_->pending != nullptr;
+        impl_->StartHub(request, console_id_hash);  // (a room waiting beside the hubs, crossplay, goes on below)
         impl_->Touch();
-        return;
     }
     if (impl_->pending != nullptr && !console_id_hash.empty()) {
         auto s = std::move(impl_->pending);
         impl_->pending.reset();
+        impl_->waiting_for_console = false;
         s->console_id_hash = console_id_hash;
+        if (s->request.keep_hubs && impl_->medium != nullptr && !s->request.preferred_mac) {
+            s->request.preferred_mac = impl_->hub_mac;
+        }
         MH4N_LOG(Info, kLog, "joining {}:{} as {}", s->request.host, s->request.port, s->request.nickname);
         impl_->StartSession(lock, std::move(s));
         impl_->Touch();
@@ -852,29 +944,30 @@ void Client::RemoveWifiListener(u64 id) {
 
 bool Client::SendWifi(WifiPacket wifi) {
     std::lock_guard lock(impl_->mutex);
+    bool sent = false;
     if (impl_->medium != nullptr) {
-        if (impl_->state != State::Joined) {
-            return false;
-        }
         impl_->medium->Send(wifi);  // (returns at once: the medium's threads do the work)
-        return true;
+        sent = true;
     }
-    const auto s = impl_->JoinedSession();
-    if (s == nullptr) {
-        return false;
+    // (with hub servers and a room both in use, crossplay, the game's frames go to both: a hub it hosts is in the room too)
+    if (const auto s = impl_->JoinedSession(); s != nullptr) {
+        wifi.transmitter = impl_->mac;
+        Packet packet;
+        packet << static_cast<u8>(kIdWifiPacket) << static_cast<u8>(wifi.type) << wifi.channel << wifi.transmitter
+               << wifi.destination << wifi.data;
+        impl_->Queue(s, std::move(packet));
+        sent = true;
     }
-    wifi.transmitter = impl_->mac;
-    Packet packet;
-    packet << static_cast<u8>(kIdWifiPacket) << static_cast<u8>(wifi.type) << wifi.channel << wifi.transmitter
-           << wifi.destination << wifi.data;
-    impl_->Queue(s, std::move(packet));
-    return true;
+    return sent;
 }
 
 std::optional<MacAddress> Client::RoomMac() const {
     std::lock_guard lock(impl_->mutex);
     if (impl_->state == State::Joined || impl_->state == State::Moderator) {
         return impl_->mac;
+    }
+    if (impl_->medium != nullptr) {
+        return impl_->hub_mac;  // (a room being joined beside the hubs: the game's address does not change meanwhile)
     }
     return std::nullopt;
 }
@@ -892,6 +985,14 @@ bool Join(const JoinRequest& request, std::string* error) {
 
 void Leave() {
     Default().Leave();
+}
+
+void LeaveRoom() {
+    Default().LeaveRoom();
+}
+
+void LeaveHubs() {
+    Default().LeaveHubs();
 }
 
 bool WaitJoined(int timeout_ms) {

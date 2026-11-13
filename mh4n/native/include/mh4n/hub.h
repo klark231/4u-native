@@ -36,8 +36,9 @@ constexpr std::size_t kHeaderSize = 24;     ///< "MHGS", u16 server protocol, u1
 constexpr std::size_t kNetInfoSize = 0x480; ///< the NetworkInfo a hub is listed with
 constexpr std::size_t kMaxFrame = 4096;     ///< the server's control frame limit (maxFrame)
 constexpr std::size_t kMaxServers = 8;
-/// The servers the MHGU players use by default. A server is not tied to a game: it lists hubs by link protocol.
-constexpr const char* kDefaultServers = "hunterhubid-gu-hub.duckdns.org morerokk-mhgurecomp-ldnserver.duckdns.org";
+/// The server used when none is typed (the app's first field; the second is blank). A server is not tied to a game: it
+/// lists hubs by link protocol. Typed with or without "http://".
+constexpr const char* kDefaultServers = "http://meoli.viewdns.net";
 
 enum ControlType : u8 {
     kList = 1,
@@ -70,6 +71,11 @@ const char* ServerErrorText(u32 code);
 /// for the other (nor for MHGU, whose link protocols are 2 and 3).
 enum class Family : u8 { Mh4u = 1, Mh4g = 2 };
 
+/// Cross-region play: every copy (USA, EUR, JPN, KOR) lists and finds its hubs under the one link protocol kLinkMh4u, so
+/// they all see each other. The two families above, their link protocols and the program id table are kept for the day
+/// the regions have to be told apart again: set this to false (and show the app's "Game" row) to bring that back.
+constexpr bool kCrossRegion = true;
+
 constexpr u16 kLinkMh4u = 0x4D01;  ///< 'M', 1
 constexpr u16 kLinkMh4g = 0x4D02;  ///< 'M', 2
 
@@ -91,7 +97,8 @@ struct Endpoint {
     bool operator==(const Endpoint& other) const { return host == other.host && port == other.port; }
 };
 
-/// "name", "name:port", "1.2.3.4" or "1.2.3.4:port". False for anything else (an IPv6 literal included: hubs are IPv4).
+/// "name", "name:port", "1.2.3.4" or "1.2.3.4:port"; a leading "http://" or "https://" and anything after a "/" are
+/// ignored. False for anything else (an IPv6 literal included: hubs are IPv4).
 bool ParseEndpoint(std::string_view text, Endpoint* out);
 /// Servers separated by spaces, commas, semicolons or line breaks; a bad one is skipped, a double is kept once, at most
 /// kMaxServers. An empty text is the default servers; "off" (alone) is none.

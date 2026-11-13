@@ -137,6 +137,13 @@ void lock_toggle(const char *by) {
 
 // ------------------------------------------------------------------ settings (touch_layout.txt)
 enum { TOUCH_AUTO, TOUCH_ON, TOUCH_OFF };
+// The layout in use: Adaptive (the pill, the menu pad, the layout for bows and bowguns: what the sections below describe) or
+// Traditional, an emulator's: the same controls always - A B X Y, L R ZL ZR, START, SELECT, the d-pad and the stick -
+// whatever the game or the weapon is doing: no menu pad, no layout for bows. Each keeps its own places in touch_layout.txt
+// (trad_<control>), its own buttons that show (trad_show_<button>), and the player's choice is `scheme` there.
+enum { SCHEME_ADAPTIVE, SCHEME_TRADITIONAL };
+int g_scheme = SCHEME_ADAPTIVE;
+bool trad() { return g_scheme == SCHEME_TRADITIONAL; }
 // the game's buttons, for showing each on the screen or not
 enum { TB_ATTACKS, TB_DODGE, TB_GUARD, TB_SHEATHE, TB_START, TB_SELECT, TB_DPAD, TB_L, TB_ZL, TB_ZR, TB_SCREEN, TB_STICK,
        TB_RANGED, TB_FIRE, TB_SECOND, TB_AIM, TB_RSPECIAL, TB_AMMO, TB_MDPAD, TB_ITEMARROWS,
@@ -153,10 +160,12 @@ struct Settings {
     float camera = 1.0f;   // the camera's turn for a drag (1: about 90 degrees a screen height)
     float opacity = .8f;   // of the controls, .2 .. 1
     bool show[TB_COUNT];
+    bool tshow[TB_COUNT];   // the same for the Traditional layout (TB_ATTACKS to TB_STICK; all on by default)
+    bool auto_run = false;  // Traditional: the thumb past the stick's rim runs (R held); off: only the R button runs
     bool debug = false;    // (debug 1: what each finger lands on, in the log)
 };
 Settings g_set;
-bool show(int b) { return b < 0 || g_set.show[b]; }
+bool show(int b) { return b < 0 || (trad() && b <= TB_STICK ? g_set.tshow[b] : g_set.show[b]); }
 // The layout editor's panel: its middle where the player dragged it (fractions of the screen's width from the left and
 // of its height from the top; below 0 its usual place, a little above the middle) and its size (EPANEL_MIN to 100 %).
 // Kept in the file however the editor closes, Save or Cancel (editor_panel in touch_layout.txt: the MHGU port's the same)
@@ -326,10 +335,46 @@ const Def DEFS[C_COUNT] = {
 };
 enum { STYLE_PILL, STYLE_SEPARATE, STYLE_CORNER, STYLE_COUNT };  // how the attacks and the guard are laid out
 int g_style = STYLE_PILL;    // (Layout.style)
+// Traditional puts L, ZL and SELECT at the left edge and START at the right one, where the controller has them
+bool from_right(int i) {
+    if (trad() && (i == C_L || i == C_ZL || i == C_HSELECT)) return false;
+    if (trad() && i == C_MENU) return true;
+    return DEFS[i].right;
+}
+// What a control shows in Traditional: the controller's letter on a plain disc
+bool plain_letter(int i) {
+    return trad() && (i == C_HEAVY || i == C_LIGHT || i == C_DODGE || i == C_SHEATHE || i == C_R || i == C_ZR || i == C_ZL ||
+                      i == C_L || i == C_MENU || i == C_HSELECT);
+}
+const char *letter_of(int i) {
+    switch (i) {
+    case C_HEAVY: return "A";
+    case C_LIGHT: return "X";
+    case C_DODGE: return "B";
+    case C_SHEATHE: return "Y";
+    default: return DEFS[i].letter;
+    }
+}
+const char *name_of(int i) {  // (the layout editor's name for it)
+    if (!trad()) return DEFS[i].name;
+    switch (i) {
+    case C_HEAVY: return "A";
+    case C_LIGHT: return "X";
+    case C_DODGE: return "B";
+    case C_SHEATHE: return "Y";
+    case C_R: return "R";
+    case C_ZR: return "ZR";
+    case C_ZL: return "ZL";
+    case C_L: return "L";
+    case C_MENU: return "START";
+    case C_HSELECT: return "SELECT";
+    default: return DEFS[i].name;
+    }
+}
 int g_ranged = 0;            // the weapon (UiGameState.ranged) while the layout for it applies, else 0
 int g_edit_set = -1;         // the editor's: which layout it shows, 0 the usual one, 1 the ranged one; -1 not open
 // (a bow's or a bowgun's buttons are no menu's: in the game's menus the other set, with A, B, X and Y as they are)
-bool ranged_layout() { return g_edit_set >= 0 ? g_edit_set == 1 : g_ranged != 0 && g_game.menu != 1; }
+bool ranged_layout() { return !trad() && (g_edit_set >= 0 ? g_edit_set == 1 : g_ranged != 0 && g_game.menu != 1); }
 bool is_ranged(int i) { return i >= C_RFIRE && i <= C_AMMO_DOWN; }
 bool is_combo(int i) { return i >= C_COMBO && i <= C_COMBO_END; }
 int show_setting(int i) {  // the show_* a control follows (the settings and layout buttons have none: always there)
@@ -368,6 +413,16 @@ bool g_town_edit;  // (the layout editor is open: the buttons that come and go s
 // moved with the stick, and nobody walks there (with the stick hidden the pad shows there too: nothing else would)
 bool mpad_menu(bool menu) { return g_town_edit || (menu && !(g_game.front_end == 1 && show(TB_STICK))); }
 bool in_mode(int i, bool menu) {
+    if (trad()) {  // (the same ones in a menu and out of it: no menu pad, no layout for bows, no pill)
+        if (i == C_TOWN) return !menu && (g_town_edit || town_available());
+        if (i == C_SETTINGS) return true;
+        if (is_combo(i)) return g_combo[i - C_COMBO] != 0;
+        switch (i) {
+        case C_HEAVY: case C_LIGHT: case C_DODGE: case C_SHEATHE: case C_R: case C_ZR: case C_ZL: case C_L: case C_MENU:
+        case C_HSELECT: case C_HDPAD: case C_SCREEN: case C_STICK: return show(show_setting(i));
+        default: return false;
+        }
+    }
     if (i == C_TOWN) return !menu && (g_town_edit || town_available());
     // (the run button: with show_stick_run 0, in a hunt and in towns, either layout, never in a menu - R turns its pages)
     if (i == C_RUN) return !menu && !show(TB_STICKRUN);
@@ -447,48 +502,79 @@ struct Layout {
     float x[C_COUNT], y[C_COUNT], scale[C_COUNT];
     int style;  // STYLE_*
 };
-Layout defaults() {
+Layout defaults_for(int scheme) {
     Layout l = {};
     for (int i = 0; i < C_COUNT; i++) l.x[i] = DEFS[i].x, l.y[i] = DEFS[i].y, l.scale[i] = 1.0f;  // (the menu layout's: unused)
+    if (scheme == SCHEME_TRADITIONAL) {  // (the diamond on the right, the shoulders at the top corners, START and SELECT at the top
+                                         // middle, the d-pad above the stick; x, y: screen heights from the edge it is placed from,
+                                         // from the bottom; k the size: A, B, X and Y all alike)
+        l.style = STYLE_SEPARATE;
+        struct { int c; float x, y, k; } P[] = {
+            {C_HEAVY, .105f, .33f, .75f}, {C_DODGE, .225f, .205f, 1.04f}, {C_LIGHT, .225f, .455f, .75f},  // A right, B below, X above
+            {C_SHEATHE, .345f, .33f, 1.26f},                                                               // Y left
+            {C_R, .09f, .80f, 1.0f}, {C_ZR, .09f, .93f, 1.0f}, {C_L, .09f, .80f, 1.0f}, {C_ZL, .09f, .93f, 1.0f},
+            {C_MENU, .60f, .93f, 1.0f}, {C_HSELECT, .60f, .93f, 1.0f}, {C_HDPAD, .30f, .60f, .95f}, {C_STICK, .29f, .27f, 1.0f},
+        };
+        for (const auto &t : P) l.x[t.c] = t.x, l.y[t.c] = t.y, l.scale[t.c] = t.k;
+    }
     return l;
 }
+Layout defaults() { return defaults_for(g_scheme); }
+Layout g_other;  // the layout not in use: the Adaptive one's places while Traditional is, and the other way round
 std::string g_layout_path = "touch_layout.txt";  // (the app's folder: touch_init)
 const char *const CONTROLS_KEY[3] = {"auto", "on", "off"};
 
 bool load_layout(Layout *l) {
-    *l = defaults();
-    for (int b = 0; b < TB_COUNT; b++) g_set.show[b] = TB_DEFAULT[b];
+    Layout a = defaults_for(SCHEME_ADAPTIVE), t = defaults_for(SCHEME_TRADITIONAL);
+    g_scheme = SCHEME_ADAPTIVE;
+    for (int b = 0; b < TB_COUNT; b++) g_set.show[b] = TB_DEFAULT[b], g_set.tshow[b] = true;
+    g_set.auto_run = false;
     for (int k = 0; k < COMBOS; k++) g_combo[k] = 0;
     g_epanel = EditPanel{};
     FILE *f = fopen(g_layout_path.c_str(), "r");
-    if (!f) return false;
+    if (!f) {
+        *l = a, g_other = t;
+        return false;
+    }
     char line[160], key[40], word[40];
-    float x, y, s;
+    float x, y, sz;
     while (fgets(line, sizeof line, f)) {
         if (line[0] == '#') continue;
-        int n = sscanf(line, "%39s %f %f %f", key, &x, &y, &s);
+        int n = sscanf(line, "%39s %f %f %f", key, &x, &y, &sz);
         if (n == 4) {
-            for (int i = 0; i < C_LAID; i++)
-                if (!strcmp(key, DEFS[i].key) && x > 0 && x < 4 && y > 0 && y < 1 && s >= .4f && s <= 2.5f)
-                    l->x[i] = x, l->y[i] = y, l->scale[i] = s;
+            const bool ok = x > 0 && x < 4 && y > 0 && y < 1 && sz >= .4f && sz <= 2.5f;
+            for (int i = 0; i < C_LAID && ok; i++) {
+                char tk[48];
+                snprintf(tk, sizeof tk, "trad_%s", DEFS[i].key);
+                if (!strcmp(key, DEFS[i].key)) a.x[i] = x, a.y[i] = y, a.scale[i] = sz;
+                if (!strcmp(key, tk)) t.x[i] = x, t.y[i] = y, t.scale[i] = sz;
+            }
             bool usual = x < 0 && y < 0, placed = x >= 0 && x <= 1 && y >= 0 && y <= 1;
-            if (!strcmp(key, "editor_panel") && (usual || placed) && s >= EPANEL_MIN && s <= 1.0f)
-                g_epanel.x = usual ? -1.0f : x, g_epanel.y = usual ? -1.0f : y, g_epanel.k = s;
+            if (!strcmp(key, "editor_panel") && (usual || placed) && sz >= EPANEL_MIN && sz <= 1.0f)
+                g_epanel.x = usual ? -1.0f : x, g_epanel.y = usual ? -1.0f : y, g_epanel.k = sz;
         }
-        if (n >= 2 && !strcmp(key, "attack_style") && x >= 0 && x < (float)STYLE_COUNT) l->style = (int)x;
+        if (n >= 2 && !strcmp(key, "attack_style") && x >= 0 && x < (float)STYLE_COUNT) a.style = (int)x;
         if (n >= 2 && !strcmp(key, "opacity")) g_set.opacity = std::clamp(x, .2f, 1.0f);
         if (n >= 2 && !strcmp(key, "camera_speed")) g_set.camera = std::clamp(x, .2f, 5.0f);
         if (n >= 2 && !strcmp(key, "debug")) g_set.debug = x != 0;
         if (n >= 2 && !strncmp(key, "show_", 5))
             for (int b = 0; b < TB_COUNT; b++)
                 if (!strcmp(key + 5, TB_KEY[b])) g_set.show[b] = x != 0;
+        if (n >= 2 && !strncmp(key, "trad_show_", 10))
+            for (int b = 0; b < TB_COUNT; b++)
+                if (!strcmp(key + 10, TB_KEY[b])) g_set.tshow[b] = x != 0;
+        if (n >= 2 && !strcmp(key, "trad_auto_run")) g_set.auto_run = x != 0;
         int k;
         if (sscanf(line, "combo_buttons %d %39s", &k, word) == 2 && k >= 1 && k <= COMBOS) g_combo[k - 1] = combo_mask(word);
         if (sscanf(line, "%39s %39s", key, word) == 2 && !strcmp(key, "controls"))
             for (int m = 0; m < 3; m++)
                 if (!strcmp(word, CONTROLS_KEY[m])) g_set.controls = m;
+        if (sscanf(line, "%39s %39s", key, word) == 2 && !strcmp(key, "scheme"))
+            g_scheme = !strcmp(word, "traditional") ? SCHEME_TRADITIONAL : SCHEME_ADAPTIVE;
     }
     fclose(f);
+    *l = trad() ? t : a;
+    g_other = trad() ? a : t;
     return true;
 }
 
@@ -496,12 +582,19 @@ void save_layout(const Layout &l) {
     FILE *f = fopen(g_layout_path.c_str(), "w");
     if (!f) { fprintf(stderr, "[touch] could not save %s\n", g_layout_path.c_str()); return; }
     fprintf(f, "# MH4U's touch controls: name, centre (screen heights from its edge and from the bottom), size\n");
-    for (int i = 0; i < C_LAID; i++) fprintf(f, "%s %.4f %.4f %.3f\n", DEFS[i].key, l.x[i], l.y[i], l.scale[i]);
-    fprintf(f, "# the attacks: 0 the pill, 1 two buttons, 2 a band round the corner\nattack_style %d\n", l.style);
+    const Layout &ad = trad() ? g_other : l, &tl = trad() ? l : g_other;  // (both layouts are kept: the one in use and the other)
+    for (int i = 0; i < C_LAID; i++) fprintf(f, "%s %.4f %.4f %.3f\n", DEFS[i].key, ad.x[i], ad.y[i], ad.scale[i]);
+    fprintf(f, "# the attacks: 0 the pill, 1 two buttons, 2 a band round the corner\nattack_style %d\n", ad.style);
+    fprintf(f, "# the Traditional layout's places (the same names, trad_ before them) and which layout is in use\n");
+    for (int i = 0; i < C_LAID; i++) fprintf(f, "trad_%s %.4f %.4f %.3f\n", DEFS[i].key, tl.x[i], tl.y[i], tl.scale[i]);
+    fprintf(f, "scheme %s\n", trad() ? "traditional" : "adaptive");
     fprintf(f, "# shown while no controller is connected (auto), always (on) or never (off: the settings button alone)\n");
     fprintf(f, "controls %s\nopacity %.2f\ncamera_speed %.2f\n", CONTROLS_KEY[g_set.controls], g_set.opacity, g_set.camera);
     fprintf(f, "# which of the game's buttons show (1) or not (0)\n");
     for (int b = 0; b < TB_COUNT; b++) fprintf(f, "show_%s %d\n", TB_KEY[b], g_set.show[b] ? 1 : 0);
+    fprintf(f, "# the same for the Traditional layout (all on) and its run: the thumb past the stick's rim runs (1) or only R does (0)\n");
+    for (int b = 0; b < TB_COUNT; b++) fprintf(f, "trad_show_%s %d\n", TB_KEY[b], g_set.tshow[b] ? 1 : 0);
+    fprintf(f, "trad_auto_run %d\n", g_set.auto_run ? 1 : 0);
     fprintf(f, "# the combined buttons: the game's buttons each presses together\n");
     for (int k = 0; k < COMBOS; k++)
         if (g_combo[k]) fprintf(f, "combo_buttons %d %s\n", k + 1, combo_text(g_combo[k]).c_str());
@@ -562,7 +655,7 @@ const float MIN_FIT = .6f;
 Geo place_raw(const Layout &l, int i, float w, float h);
 Geo place(const Layout &l, int i, float w, float h) {
     Geo g = place_raw(l, i, w, h);
-    const Fit &f = g_fit[DEFS[i].right ? 1 : 0];
+    const Fit &f = g_fit[from_right(i) ? 1 : 0];
     if (f.scale == 1 && f.offset.x == 0 && f.offset.y == 0) return g;
     return {ImVec2(f.anchor.x + (g.c.x - f.anchor.x) * f.scale + f.offset.x, f.anchor.y + (g.c.y - f.anchor.y) * f.scale + f.offset.y),
             g.r * f.scale};
@@ -605,7 +698,7 @@ Geo place_raw(const Layout &l, int i, float w, float h) {
         float r = d.r * l.scale[i] * h, in = r * (1 + BAND_T);
         return {ImVec2(w - l.x[i] * h - in, h - l.y[i] * h - in), r};
     }
-    return {ImVec2(d.right ? w - l.x[i] * h : l.x[i] * h, h - l.y[i] * h), d.r * l.scale[i] * h};
+    return {ImVec2(from_right(i) ? w - l.x[i] * h : l.x[i] * h, h - l.y[i] * h), d.r * l.scale[i] * h};
 }
 
 // the d-pad's direction under a finger, from its centre: one at a time (a menu's cursor goes one way: a thumb between
@@ -1030,7 +1123,7 @@ void ensure_loaded(State &s) {
     run_clear_of_band(s.layout);
     s.saved = s.layout;
     g_style = s.layout.style;
-    fprintf(stderr, "[touch] layout: %s\n", had ? g_layout_path.c_str() : "the defaults");
+    fprintf(stderr, "[touch] layout %s: %s\n", trad() ? "Traditional" : "Adaptive", had ? g_layout_path.c_str() : "the defaults");
 }
 
 bool pulse_busy(const Pulse &p, uint64_t now) {
@@ -1200,7 +1293,7 @@ void edit_begin(State &s) {
     s.edit = true, s.sel = -1, s.pinch = false;
     g_town_edit = true;
     hud_load(s);
-    g_edit_set = g_ranged != 0;  // (the layout in use; the panel's button changes it)
+    g_edit_set = !trad() && g_ranged != 0;  // (the layout in use; the panel's button changes it)
     s.saved = s.layout, s.epanel_open = g_epanel, s.rep_btn = -1;
     for (Finger &f : s.f) f.kind = F_NONE;
     s.stick_on = false, s.held = 0;
@@ -1370,10 +1463,12 @@ void edit_event(State &s, const SDL_Event &e, float x, float y) {
                         s.rep_btn = i, s.rep_ns = now, s.rep_at = again < 0 ? btn[i] : s.rep_at;
                     }
                 } else if (i == E_SET) {
-                    g_edit_set = g_edit_set == 1 ? 0 : 1;
-                    if (s.sel != SEL_PANEL) s.sel = -1;
+                    if (!trad()) {  // (Traditional has no layout for bows)
+                        g_edit_set = g_edit_set == 1 ? 0 : 1;
+                        if (s.sel != SEL_PANEL) s.sel = -1;
+                    }
                 } else if (i == E_STYLE) {
-                    if (!ranged_layout()) next_style(s);
+                    if (!ranged_layout() && !trad()) next_style(s);
                 } else if (i == E_RESET) {
                     s.layout = defaults();
                     g_style = s.layout.style;
@@ -1455,7 +1550,7 @@ void edit_event(State &s, const SDL_Event &e, float x, float y) {
                 s.layout.x[f->ctl] = g.c.x / s.h, s.layout.y[f->ctl] = (s.h - g.c.y) / s.h;
                 s.layout.scale[f->ctl] = std::clamp(g.r / (DEFS[f->ctl].r * s.h), .5f, 2.2f);
             }
-            s.layout.x[f->ctl] += (DEFS[f->ctl].right ? -dx : dx) / s.h;
+            s.layout.x[f->ctl] += (from_right(f->ctl) ? -dx : dx) / s.h;
             s.layout.y[f->ctl] -= dy / s.h;
             clamp_place(s, f->ctl);
         }
@@ -1476,7 +1571,7 @@ void update_shift(const State &s) {
         Rect box = {1e30f, 1e30f, -1e30f, -1e30f, true};
         bool under = false;
         for (int i = 0; i < C_COUNT; i++) {
-            if (DEFS[i].right != (side == 1) || !in_mode(i, s.menu)) continue;
+            if (from_right(i) != (side == 1) || !in_mode(i, s.menu)) continue;
             if (!s.visible && i != C_SETTINGS) continue;
             if (covered(s.layout, i, s.w, s.h)) under = true;
             Rect b = bounds(s.layout, i, s.w, s.h);
@@ -1886,7 +1981,7 @@ void frame_input(State &s, bool controller, UiInput &out) {
     // The stick's locked run ends once a run can't go on: show_stick_run turned off, a menu of the game's open, the
     // controls hidden or in the editor, the weapon out, the hunter not played (away from a town and from the quest camera:
     // a cutscene, a cart, the quest's end; not a stall of the game's: PLAY_STALL)
-    bool stick_run = show(TB_STICKRUN);
+    bool stick_run = trad() ? g_set.auto_run : show(TB_STICKRUN);  // (Traditional: R is a button of its own, held to run)
     bool quest_cam = Port::Hooks::CameraTurnActive();
     if (quest_cam) s.quest_cam_ns = now, s.quest_cam_frame = g_frames;
     else quest_cam = g_frames_fed && s.quest_cam_ns && now - s.quest_cam_ns < PLAY_STALL && g_frames - s.quest_cam_frame < PLAY_FRAMES;
@@ -2622,7 +2717,7 @@ void control(ImDrawList *dl, ImFont *font, const Layout &l, int i, float w, floa
     if (i == C_MPAD) { menu_pad(dl, g, thumb, mask, a, thumb.x != g.c.x || thumb.y != g.c.y); return; }
     if (is_tab(i)) { tab(dl, font, g, i == C_ML, DEFS[i].letter, mask != 0, a); return; }
     if (i == C_CORNER) { corner_band(dl, font, g, mask, a); return; }
-    if (i == C_HEAVY || i == C_LIGHT) {  // (a great sword, a small one, as on the pill)
+    if ((i == C_HEAVY || i == C_LIGHT) && !trad()) {  // (a great sword, a small one, as on the pill)
         float r = mask ? g.r * .95f : g.r;
         disc(dl, g.c, r, mask != 0, a);
         ImU32 col = fade(mask ? GLOW : INK, a);
@@ -2641,15 +2736,19 @@ void control(ImDrawList *dl, ImFont *font, const Layout &l, int i, float w, floa
         return;
     }
     if (is_dpad(i)) { dpad(dl, g, mask, a); return; }
-    if (DEFS[i].icon == I_LETTER) {  // (the game's letter, large, as on the 3DS's face buttons)
+    if (DEFS[i].icon == I_LETTER || plain_letter(i)) {  // (the game's letter, large, as on the 3DS's face buttons)
         std::string own = is_combo(i) ? combo_text(g_combo[i - C_COMBO]) : "";
-        const char *label = is_combo(i) ? (own.empty() ? "+" : own.c_str()) : DEFS[i].letter;
+        const char *label = is_combo(i) ? (own.empty() ? "+" : own.c_str()) : letter_of(i);
         float r = mask ? g.r * .95f : g.r, fs = r * (is_combo(i) ? .75f : i >= C_ML ? .9f : 1.05f);
         disc(dl, g.c, r, mask != 0, a);
         ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0, label);
         if (ts.x > r * 1.55f) fs *= r * 1.55f / ts.x, ts = font->CalcTextSizeA(fs, FLT_MAX, 0, label);  // (inside the disc)
         dl->AddText(font, fs, ImVec2(g.c.x - ts.x * .5f + fs * .04f, g.c.y - ts.y * .5f + fs * .05f), fade(IM_COL32(0, 0, 0, 255), a * .7f), label);
         dl->AddText(font, fs, ImVec2(g.c.x - ts.x * .5f, g.c.y - ts.y * .52f), fade(mask ? GLOW : INK, a), label);
+        if (i == C_L && trad() && !s.edit && lock_on_allowed() && Port::Hooks::LockOn()) {  // (the lock-on is on: a ring round L)
+            float pulse = Port::Hooks::LockOnFollowing() ? .6f + .3f * sinf(SDL_GetTicksNS() / 1e9f * 4) : .45f;
+            dl->AddCircle(g.c, r * 1.16f, fade(GLOW, a * pulse), 40, r * .09f);
+        }
         return;
     }
     float r = mask ? g.r * .95f : g.r;
@@ -2859,8 +2958,8 @@ void draw_editor(ImDrawList *dl, ImFont *font, ImFont *title, const State &s, fl
         }
         // its name below it, above it, beside it on the screen's inner side or the outer: the first place that is clear
         // of the panel, of the other controls and of the names put down before; the selected one's size the same way
-        const char *t = T(DEFS[i].name);
-        float fs = .024f * h, side = DEFS[i].right ? -1.0f : 1.0f;
+        const char *t = T(name_of(i));
+        float fs = .024f * h, side = from_right(i) ? -1.0f : 1.0f;
         ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0, t);
         float drop = i == C_MENU || i == C_HSELECT ? g.r * .5f : 0;  // (START's and SELECT's plates below them)
         bool top_row = i == C_SETTINGS || i == C_LAYOUT;              // (that row's names side by side above it)
@@ -2906,10 +3005,10 @@ void draw_editor(ImDrawList *dl, ImFont *font, ImFont *title, const State &s, fl
     if (wide > room) ss *= room / wide;  // (a narrow screen, a long sentence: on one line, smaller)
     text_center(dl, font, ss, ImVec2((panel.x0 + panel.x1) * .5f, panel.y0 + .08f * u), INK, say);
     static const char *const STYLE_LABEL[STYLE_COUNT] = {"Attacks: pill", "Attacks: buttons", "Attacks: corner"};
-    const char *const LABEL[E_COUNT] = {"-", "+", ranged_layout() ? "Layout: ranged" : "Layout: melee", STYLE_LABEL[s.layout.style],
-                                        "Defaults", "Cancel", "Save"};
+    const char *const LABEL[E_COUNT] = {"-", "+", trad() ? "Layout: traditional" : ranged_layout() ? "Layout: ranged" : "Layout: melee",
+                                        trad() ? "A B X Y" : STYLE_LABEL[s.layout.style], "Defaults", "Cancel", "Save"};
     for (int i = 0; i < E_COUNT; i++) {
-        bool off = ((i == E_SMALLER || i == E_BIGGER) && s.sel < 0 && !picked) || (i == E_STYLE && ranged_layout());
+        bool off = ((i == E_SMALLER || i == E_BIGGER) && s.sel < 0 && !picked) || ((i == E_STYLE || i == E_SET) && trad()) || (i == E_STYLE && ranged_layout());
         bool lit = false;
         for (const Finger &f : s.f)
             if (f.kind == F_MENU && f.ctl == i) lit = true;
@@ -2956,7 +3055,7 @@ void mpad_fade(const State &s, uint64_t now) {
     const float dt = last ? (float)std::min<uint64_t>(now - last, 100 * MS) : 0;
     last = now;
     if (in_mode(C_MPAD, s.menu)) g_mpad_a = std::min(1.0f, g_mpad_a + dt / (float)MPAD_IN);
-    else if (s.menu || now - s.menu_off_ns >= MPAD_HOLD || !show(TB_MDPAD)) g_mpad_a = std::max(0.0f, g_mpad_a - dt / (float)MPAD_OUT);
+    else if (trad() || s.menu || now - s.menu_off_ns >= MPAD_HOLD || !show(TB_MDPAD)) g_mpad_a = std::max(0.0f, g_mpad_a - dt / (float)MPAD_OUT);
 }
 
 ImFont *g_title_font;  // (the editor's title: a serif, as the game's own titles; else the main font)
@@ -2984,7 +3083,7 @@ void draw(State &s, float w, float h) {
         if (of_mpad(i) || !in_mode(i, s.menu) || covered(s.layout, i, w, h)) continue;
         // (in a menu of the game's the player's buttons stay, faded so its window reads and taps under them; what the
         // menu pad's group covers goes as the pad comes in, and comes back as it goes)
-        float k = s.menu && i != C_MY ? .5f : 1.0f;
+        float k = s.menu && i != C_MY && !trad() ? .5f : 1.0f;  // (Traditional's buttons are the menu's too: not faded)
         if (g_mpad_a > 0 && under_mpad(s.layout, i, w, h)) k *= 1 - g_mpad_a;
         if (k > .01f) control(dl, font, s.layout, i, w, h, s, a * k);
     }
@@ -3086,14 +3185,30 @@ void touch_toggle_bottom() {
     fprintf(stderr, "[touch] the touch screen's corner %s\n", b ? "shown" : "hidden");
 }
 
+// The layout in use changes (touch_set_setting "scheme"): the other one's places come in, and the first's are kept for coming back
+void set_scheme(State &s, int scheme) {
+    if (scheme == g_scheme || s.edit) return;
+    std::swap(s.layout, g_other);
+    g_scheme = scheme;
+    s.saved = s.layout;
+    g_style = s.layout.style;
+    g_edit_set = -1;
+    fprintf(stderr, "[touch] layout %s\n", trad() ? "Traditional" : "Adaptive");
+}
+
 std::string touch_setting(const std::string &key) {
     State &s = g_s;
     ensure_loaded(s);
     char text[32];
+    if (key == "scheme") return trad() ? "traditional" : "adaptive";
+    if (key == "auto_run") return g_set.auto_run ? "1" : "0";
+    if (!key.compare(0, 10, "trad_show_"))
+        for (int b = 0; b < TB_COUNT; b++)
+            if (key.compare(10, std::string::npos, TB_KEY[b]) == 0) return g_set.tshow[b] ? "1" : "0";
     if (key == "controls") return CONTROLS_KEY[g_set.controls];
     if (key == "opacity") return snprintf(text, sizeof text, "%.2f", g_set.opacity), text;
     if (key == "camera_speed") return snprintf(text, sizeof text, "%.2f", g_set.camera), text;
-    if (key == "attack_style") return std::to_string(s.layout.style);
+    if (key == "attack_style") return std::to_string(trad() ? g_other.style : s.layout.style);  // (the Adaptive layout's)
     if (!key.compare(0, 5, "combo") && key.size() == 6 && key[5] >= '1' && key[5] <= '0' + COMBOS) return combo_text(g_combo[key[5] - '1']);
     if (!key.compare(0, 5, "show_"))
         for (int b = 0; b < TB_COUNT; b++)
@@ -3116,6 +3231,14 @@ void touch_set_setting(const std::string &key, const std::string &value) {
     if (key == "controls") {
         for (int m = 0; m < 3; m++)
             if (value == CONTROLS_KEY[m]) g_set.controls = m;
+    } else if (key == "scheme") {
+        set_scheme(s, value == "traditional" || value == "1" ? SCHEME_TRADITIONAL : SCHEME_ADAPTIVE);
+    } else if (key == "auto_run") {
+        g_set.auto_run = x != 0;
+    } else if (!key.compare(0, 10, "trad_show_")) {
+        known = false;
+        for (int b = 0; b < TB_COUNT; b++)
+            if (key.compare(10, std::string::npos, TB_KEY[b]) == 0) g_set.tshow[b] = x != 0, known = true;
     } else if (key == "opacity") {
         g_set.opacity = std::clamp(x, .2f, 1.0f);
     } else if (key == "camera_speed") {
@@ -3124,11 +3247,13 @@ void touch_set_setting(const std::string &key, const std::string &value) {
         // the editor's way from one style to the next (what the corner band would cover moves inside its bend), which
         // takes the controls' places from where they were before: the layout as it is now
         int style = std::clamp((int)x, 0, STYLE_COUNT - 1);
-        if (s.w > 0 && s.h > 0 && !s.edit) {
+        if (trad()) {  // (the Adaptive layout's, kept for when it is back)
+            g_other.style = style;
+        } else if (s.w > 0 && s.h > 0 && !s.edit) {
             s.saved = s.layout;
             for (int i = 0; i < STYLE_COUNT && s.layout.style != style; i++) next_style(s);
         }
-        s.layout.style = style, g_style = style;
+        if (!trad()) s.layout.style = style, g_style = style;
     } else if (!key.compare(0, 5, "combo") && key.size() == 6 && key[5] >= '1' && key[5] <= '0' + COMBOS) {
         g_combo[key[5] - '1'] = combo_mask(value);
     } else if (!key.compare(0, 5, "show_")) {

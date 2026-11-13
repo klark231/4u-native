@@ -397,8 +397,17 @@ rooms::WifiPacket Frame(rooms::WifiPacket::Type type, const rooms::MacAddress& t
 }  // namespace
 
 TEST_CASE("hub: servers, families and the matchmaking key") {
-    CHECK(hub::ParseServers("").size() == 2);
+    REQUIRE(hub::ParseServers("").size() == 1);
+    CHECK(hub::ParseServers("")[0].Text() == "meoli.viewdns.net");
     CHECK(hub::ParseServers("off").empty());
+    hub::Endpoint typed;
+    REQUIRE(hub::ParseEndpoint("http://meoli.viewdns.net", &typed));
+    CHECK(typed.host == "meoli.viewdns.net");
+    CHECK(typed.port == hub::kDefaultPort);
+    REQUIRE(hub::ParseEndpoint("HTTPS://a.example:1234/lobby", &typed));
+    CHECK(typed.host == "a.example");
+    CHECK(typed.port == 1234);
+    CHECK_FALSE(hub::ParseEndpoint("http://", &typed));
     const auto two = hub::ParseServers("a.example, b.example:1234;a.example bad:99999 ::1");
     REQUIRE(two.size() == 2);
     CHECK(two[0].Text() == "a.example");
@@ -409,7 +418,7 @@ TEST_CASE("hub: servers, families and the matchmaking key") {
     CHECK(hub::FamilyOfProgram(rooms::kMh4uEurope) == hub::Family::Mh4u);
     CHECK(hub::FamilyOfProgram(0x0004000000155400ULL) == hub::Family::Mh4g);
     CHECK_FALSE(hub::FamilyOfProgram(0x0004000000197100ULL).has_value());  // another game
-    CHECK(hub::LinkProtocol(hub::Family::Mh4u) != hub::LinkProtocol(hub::Family::Mh4g));
+    CHECK((hub::LinkProtocol(hub::Family::Mh4u) != hub::LinkProtocol(hub::Family::Mh4g)) == !hub::kCrossRegion);
     // MHGU's link protocols are 2 and 3: never ours
     CHECK(hub::kLinkMh4u > 3);
     CHECK(hub::kLinkMh4g > 3);
@@ -627,19 +636,25 @@ TEST_CASE("hub: hubs are kept apart by family and by matchmaking key") {
     std::this_thread::sleep_for(1200ms);  // (more than a search has taken)
     CHECK_FALSE(other_key.Saw(rooms::WifiPacket::Type::Beacon, hm));
     CHECK_FALSE(no_key.Saw(rooms::WifiPacket::Type::Beacon, hm));
-    CHECK_FALSE(other_game.Saw(rooms::WifiPacket::Type::Beacon, hm));
+    if (hub::kCrossRegion) {  // (every region is one family on the hub servers)
+        CHECK(WaitFor([&] { return other_game.Saw(rooms::WifiPacket::Type::Beacon, hm); }));
+    } else {
+        CHECK_FALSE(other_game.Saw(rooms::WifiPacket::Type::Beacon, hm));
+    }
 }
 
 TEST_CASE("hub: a game that is not MH4U or MH4G does not use hubs") {
     rooms::Client client;
-    client.SetGameInfo({"Some other game", 0x0004000000197100ULL});
     rooms::HubRequest r;
     r.servers = "127.0.0.1:1";
     r.console_id_hash = rooms::ConsoleIdHash(5);
-    REQUIRE(client.JoinHubs(r));
-    CHECK(client.GetState() == rooms::State::Idle);
-    CHECK_FALSE(client.GetHubStatus().problem.empty());
-    CHECK_FALSE(client.RoomMac().has_value());
+    if (!hub::kCrossRegion) {  // (with every region together there is no family to refuse a game by)
+        client.SetGameInfo({"Some other game", 0x0004000000197100ULL});
+        REQUIRE(client.JoinHubs(r));
+        CHECK(client.GetState() == rooms::State::Idle);
+        CHECK_FALSE(client.GetHubStatus().problem.empty());
+        CHECK_FALSE(client.RoomMac().has_value());
+    }
     // MH4U's own ids are fine (auto)
     client.SetGameInfo({"Monster Hunter 4 Ultimate", rooms::kMh4uUsa});
     REQUIRE(client.JoinHubs(r));

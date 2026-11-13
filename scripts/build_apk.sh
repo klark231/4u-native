@@ -4,9 +4,11 @@
 #
 #   sh scripts/build_apk.sh
 #
-# The APK is android/app/build/outputs/apk/release/app-release.apk when android/keystore.properties (storePassword,
-# keyAlias, keyPassword) and android/mh4u.keystore hold your own signing key; without them it builds a debug APK
-# (android/app/build/outputs/apk/debug/app-debug.apk) signed with your Android debug key. Either way it can't replace
+# Four APKs come out, one per package name (see productFlavors in android/app/build.gradle): standard (com.mh4u.native),
+# antutu, ludashi and alt. They are android/app/build/outputs/apk/<flavor>/release/app-<flavor>-release.apk when
+# android/keystore.properties (storePassword, keyAlias, keyPassword) and android/mh4u.keystore hold your own signing key;
+# without them it builds debug APKs (.../<flavor>/debug/app-<flavor>-debug.apk) signed with your Android debug key. For
+# one flavor only: sh scripts/build_apk.sh standard. Either way it can't replace
 # an installed APK signed with another key: Android asks to uninstall it first, and that deletes its saves (export
 # them first: gear, Menu Options, Export save).
 #
@@ -46,5 +48,9 @@ echo "code library id: $(cat "$ROOT/android/app/src/main/assets/code_library_id.
 cd "$ROOT/android"
 ANDROID_HOME=$(native_path "$SDK"); export ANDROID_HOME   # (Gradle's SDK, without a local.properties)
 if [ -f keystore.properties ] && [ -f mh4u.keystore ]; then TASK=assembleRelease; KIND=release; else TASK=assembleDebug; KIND=debug; fi
+if [ -n "$1" ]; then  # (one flavor: standard, antutu, ludashi or alt)
+    F=$(printf %s "$1" | cut -c1 | tr a-z A-Z)$(printf %s "$1" | cut -c2-)
+    TASK="assemble$F$(printf %s "$KIND" | cut -c1 | tr a-z A-Z)$(printf %s "$KIND" | cut -c2-)"
+fi
 sh ./gradlew "$TASK" -q
-ls -l "app/build/outputs/apk/$KIND/"*.apk
+ls -l app/build/outputs/apk/*/"$KIND"/*.apk

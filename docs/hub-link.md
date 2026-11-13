@@ -5,17 +5,14 @@ Gear, **Multiplayer**, **Hub servers**, **Use hub servers**. The server needs no
 
 ## Who sees whom
 
-A server lists hubs by *link protocol* and *matchmaking key*. This port uses link protocols of its own:
+A server lists hubs by *link protocol* and *matchmaking key*. This port uses one link protocol of its own, `0x4D01`, for
+every region: **USA, EUR, JPN and KOR copies all see each other's hubs** (`hub::kCrossRegion`). MHGU uses 2 and 3 and MHXX
+players reach MHGU hubs through those, so they never see these hubs and these never see theirs.
 
-| Family | Games | Link protocol |
-|---|---|---|
-| MH4U | USA, EUR | `0x4D01` |
-| MH4G | JPN, KOR | `0x4D02` |
-
-MHGU uses 2 and 3 and MHXX players reach MHGU hubs through those, so they never see these hubs and these never see theirs.
-"The running game" picks the family from the game's program id (`hub::FamilyOfProgram`): USA and EUR MH4U, and the
-Japanese MH4G. A game that is in no family (another game's id) does not use hubs. **The Korean MH4G program id is not in
-the table**: choose "MH4G" by hand for it (`[Network] HubFamily = 4G`), or add its id to `FamilyOfProgram`.
+The two families the port had before (MH4U `0x4D01` for USA and EUR, MH4G `0x4D02` for JPN and KOR), the program id table
+(`hub::FamilyOfProgram`) and the `[Network] HubFamily` setting are still in the code, but unused while `kCrossRegion` is
+true; the app's "Game" row is hidden (`kHubFamilyPicker` in `settings_panel.cpp`). Set `kCrossRegion = false` to tell the
+regions apart again. That the games themselves accept each other's sessions is up to the games.
 
 ## What goes over the server
 
@@ -39,9 +36,20 @@ the first 16 bytes of its SHA-256.
 
 ## Settings (`mh4u-app.ini`, `[Network]`)
 
-`HubServers` (names or IPs, `:port` if not 39510, separated by spaces; empty = `hunterhubid-gu-hub.duckdns.org` and
-`morerokk-mhgurecomp-ldnserver.duckdns.org`, the ones MHGU uses), `HubKey`, `HubFamily` (`auto`, `4U`, `4G`).
-Everyone who plays together uses the same servers, key and family.
+`HubServer1` (the first server: empty is the default, `http://meoli.viewdns.net`; `off` is none) and `HubServer2` (the second
+server: empty is none). A server is a name or an IP, with or without `http://`, and `:port` if it is not 39510. They are
+the two fields under **Hub servers** in the app. An older `HubServers` list (servers separated by spaces) gives its first
+word to Server 1 and the rest to Server 2. `HubKey` is the matchmaking key. Everyone who plays together uses the same servers
+and key.
+
+## Crossplay: hubs and a room together
+
+With `[Network] Crossplay = 1` (Settings, Multiplayer, **Crossplay**) the client keeps hub servers and a Citra/Azahar room
+at the same time (`HubRequest::keep_room`, `JoinRequest::keep_hubs` in `rooms.h`). A room joined does not end the hubs (and the
+hubs do not end a room); the game's frames go to both, so a hub the game creates is in the room too, and its beacons reach
+both kinds of player. Two things are shared: the game's MAC address (the room is asked for the hubs' one, as
+`preferred_mac`), and the console ID. Each side stays what it was: hub players and room players reach the host, not each
+other. With it off (the default) a room replaces the hubs and the hubs replace a room.
 
 ## Tests
 

@@ -134,6 +134,17 @@ const TouchButton TOUCH_BUTTONS[] = {
     {"menu_dpad", "Menu pad", true, 2},             {"item_arrows", "Item bar arrows", true, 0},
 };
 constexpr int TB = sizeof TOUCH_BUTTONS / sizeof *TOUCH_BUTTONS;
+// The buttons of the Traditional layout (touch.cpp: a controller's, all on at first), and what each is called there; null
+// for one that layout has none of (the pill's and the bows' and the menu pad's)
+const char* trad_button(const std::string& key) {
+    static const struct { const char *key, *title; } T[] = {
+        {"attacks", "A and X"}, {"dodge", "B"}, {"sheathe", "Y"}, {"guard", "R"}, {"zr", "ZR"}, {"zl", "ZL"}, {"l", "L"},
+        {"start", "START"}, {"select", "SELECT"}, {"dpad", "D-pad"}, {"stick", "Movement stick"}, {"screen", "Touch screen button"},
+    };
+    for (const auto& t : T)
+        if (key == t.key) return t.title;
+    return nullptr;
+}
 
 // The port's buttons (hooks.cpp PadBits), as the Gameplay tab offers them
 const char* const BUTTON_KEYS[] = {"off", "ZR", "ZL", "R", "L", "X", "Y"};
@@ -163,6 +174,9 @@ struct Draft {
     int controls = 0, touch_opacity = 80, attack_style = 0;
     float camera = 1.0f;
     std::vector<char> show = std::vector<char>(TB, 1);
+    std::vector<char> tshow = std::vector<char>(TB, 1);  // the same for the Traditional layout (trad_show_<key>)
+    int scheme = 0;                                      // the touch layout: 0 Adaptive, 1 Traditional
+    bool auto_run = false;                               // Traditional: the thumb past the stick's rim runs
     // a controller's (mh4u-app.ini's [Controls], controls.h): FACE_KEYS, STICK_KEYS, R3_KEYS by index; the camera's
     // speed and the sticks' dead zone in %
     int face = 0, right_stick = 0, stick_speed = 100, r3 = 0, deadzone = 10, town = 0;
@@ -657,6 +671,12 @@ Draft load() {
         v = touch_setting(std::string("show_") + TOUCH_BUTTONS[i].key);
         if (!v.empty()) d.show[i] = std::atoi(v.c_str()) != 0;
     }
+    d.scheme = touch_setting("scheme") == "traditional" ? 1 : 0;
+    d.auto_run = touch_setting("auto_run") == "1";
+    for (int i = 0; i < TB; i++) {
+        v = touch_setting(std::string("trad_show_") + TOUCH_BUTTONS[i].key);
+        if (!v.empty()) d.tshow[i] = std::atoi(v.c_str()) != 0;
+    }
     for (int k = 0; k < 6; k++) d.combo[k] = touch_setting("combo" + std::to_string(k + 1));
     for (int k = 0; k < 6; k++)
         d.combo_pad[k] = std::max(0, index_of(kComboPadKeys, app_setting("Controls", ("Combo" + std::to_string(k + 1) + "Pad").c_str(), "None")));
@@ -817,6 +837,10 @@ bool save() {
     if (d.touch_opacity != o.touch_opacity) snprintf(text, sizeof text, "%.2f", d.touch_opacity / 100.f), touch.emplace_back("opacity", text);
     if (d.camera != o.camera) snprintf(text, sizeof text, "%.2f", d.camera), touch.emplace_back("camera_speed", text);
     if (d.attack_style != o.attack_style) touch.emplace_back("attack_style", std::to_string(d.attack_style));
+    if (d.scheme != o.scheme) touch.emplace_back("scheme", d.scheme ? "traditional" : "adaptive");  // (after the Adaptive layout's own)
+    if (d.auto_run != o.auto_run) touch.emplace_back("auto_run", d.auto_run ? "1" : "0");
+    for (int i = 0; i < TB; i++)
+        if (d.tshow[i] != o.tshow[i]) touch.emplace_back(std::string("trad_show_") + TOUCH_BUTTONS[i].key, d.tshow[i] ? "1" : "0");
     for (int i = 0; i < TB; i++)
         if (d.show[i] != o.show[i]) touch.emplace_back(std::string("show_") + TOUCH_BUTTONS[i].key, d.show[i] ? "1" : "0");
     for (int k = 0; k < 6; k++)
@@ -1177,7 +1201,7 @@ void reset_page() {
         break;
     case PAGE_CONTROLS:
         c.controls = f.controls, c.touch_opacity = f.touch_opacity, c.camera = f.camera, c.attack_style = f.attack_style;
-        c.show = f.show, c.haptics = f.haptics, c.lock_on = f.lock_on, c.gyro_aim = f.gyro_aim, c.gyro_sens = f.gyro_sens;
+        c.show = f.show, c.tshow = f.tshow, c.scheme = f.scheme, c.auto_run = f.auto_run, c.haptics = f.haptics, c.lock_on = f.lock_on, c.gyro_aim = f.gyro_aim, c.gyro_sens = f.gyro_sens;
         for (int k = 0; k < 6; k++) c.combo[k] = f.combo[k], c.combo_pad[k] = f.combo_pad[k];
         c.face = f.face, c.right_stick = f.right_stick, c.stick_speed = f.stick_speed, c.r3 = f.r3, c.deadzone = f.deadzone;
         c.town = f.town;
@@ -1558,8 +1582,10 @@ void lobby_row(std::vector<Row>& rows) {
 
 // ---------------------------------------------------------------- hub servers (net_rooms.h, mh4n/hub.h)
 // The same local play through an MHGURecomp hub server, for those who find a hub server steadier than a room. The settings
-// are written to mh4u-app.ini as they are typed (they are not part of the draft: nothing to Save). Only MH4U players (USA,
-// EUR) see each other's hubs, and MH4G players (JPN, KOR) each other's: MHGU's and MHXX's are never listed here.
+// are written to mh4u-app.ini as they are typed (they are not part of the draft: nothing to Save). Every region (USA, EUR,
+// JPN, KOR) sees each other's hubs (mh4n::hub::kCrossRegion); MHGU's and MHXX's are never listed here. The "Game" row (which
+// family's hubs to list) is hidden while the regions play together: kHubFamilyPicker brings it back.
+constexpr bool kHubFamilyPicker = false;
 const char* const HUB_FAMILIES[] = {"auto", "4U", "4G"};
 int hub_family_index() {
     const std::string v = app_setting("Network", "HubFamily", "auto");
@@ -1571,37 +1597,75 @@ void hub_rows(std::vector<Row>& r) {
     const rooms::HubStatus hs = rooms::GetHubStatus();
     header(r, "net.hub.head", tr("Hub servers"));
     note(r, "net.hub.what",
-         say("Local play through an MHGU hub server instead of a room. Everyone who plays together uses the same servers, the same game and the same key. Only MH4U (USA, EUR) and MH4G (JPN, KOR) players see these hubs.",
-             "Juego local por un servidor de hubs de MHGU en vez de una sala. Quienes juegan juntos usan los mismos servidores, el mismo juego y la misma clave. Solo los jugadores de MH4U (USA, EUR) y MH4G (JPN, KOR) ven estos hubs."),
+         say("Local play through a hub server instead of a room. Everyone who plays together uses the same servers and the same key. Players of every region (USA, EUR, JPN, KOR) see these hubs.",
+             "Juego local por un servidor de hubs en vez de una sala. Quienes juegan juntos usan los mismos servidores y la misma clave. Los jugadores de todas las regiones (USA, EUR, JPN, KOR) ven estos hubs."),
          touch_look().dim);
     if (hs.active) {
-        action(r, "net.hub.use", tr("Stop using hub servers"), []() { net_leave(); }, true, "HubStop");
+        action(r, "net.hub.use", tr("Stop using hub servers"), []() {
+            app_setting_set("Network", "HubsOn", "0");  // (not used at the next start either: they are on by default)
+            app_settings_save();
+            net_leave_hubs();
+        }, true, "HubStop");
         r.back().value = hs.family.empty() ? std::string() : hs.family;
         r.back().ink = NET_GREEN;
     } else {
         action(r, "net.hub.use", tr("Use hub servers"), []() {
             std::string error;
+            app_setting_set("Network", "HubsOn", "1");
+            app_settings_save();
             if (!net_hub_join(&error)) s.error = error;
         }, true, "HubUse");
     }
-    const std::string servers = app_setting("Network", "HubServers", "");
-    Row row;
-    row.id = "net.hub.servers", row.title = tr("Hub servers"), row.key = "HubServers";
-    row.value = servers.empty() ? std::string(tr("MHGU's public servers")) : servers;
-    row.arrow = true;
-    row.activate = [servers]() {
-        open_keyboard(tr("Hub servers"), servers, KB_ANY, 200,
-                      tr("Names or IPs, with :port if it is not 39510, separated by spaces. Empty: MHGU's public servers."),
-                      [](const std::string& typed, std::string& error) {
-                          if (!typed.empty() && mh4n::hub::ParseServers(typed).empty()) {
-                              error = tr("None of those is a server's name or address.");
-                              return false;
-                          }
-                          app_setting_set("Network", "HubServers", typed);
-                          return true;
-                      });
-    };
-    r.push_back(std::move(row));
+    {  // Crossplay, as MHGU's: hub servers and a Citra/Azahar room together (a room joined no longer ends the hubs, and a hub
+       // this phone hosts is in the room too). Off: hub servers only; a room joined replaces them. Applies to the next join.
+        const bool on = net_crossplay();
+        Row row;
+        row.id = "net.hub.cross", row.title = tr("Crossplay"), row.key = "HubCrossplay";
+        row.value = on ? std::string(tr("Citra/Azahar Rooms")) : std::string(tr("Off"));
+        row.arrow = true;
+        row.activate = [on]() {
+            app_setting_set("Network", "Crossplay", on ? "0" : "1");
+            app_settings_save();
+        };
+        r.push_back(std::move(row));
+    }
+    // The two servers, a field each (as MHGU's hub servers): Server 1 is the default one, which can be changed; Server 2 is
+    // blank. [Network] HubServer1 / HubServer2 (net_rooms.h)
+    for (int slot = 0; slot < 2; slot++) {
+        const std::string raw = net_hub_server_slot(slot);
+        Row row;
+        row.id = slot == 0 ? "net.hub.slot1" : "net.hub.slot2";
+        row.title = slot == 0 ? tr("Server 1") : tr("Server 2");
+        row.key = slot == 0 ? "HubServer1" : "HubServer2";
+        row.value = !raw.empty() ? raw
+                    : slot == 0  ? std::string(mh4n::hub::kDefaultServers) + "  (" + tr("Default") + ")"
+                                 : std::string(tr("Not set"));
+        row.arrow = true;
+        const std::string start = raw.empty() && slot == 0 ? std::string(mh4n::hub::kDefaultServers) : raw;
+        row.activate = [slot, start]() {
+            open_keyboard(slot == 0 ? tr("Server 1") : tr("Server 2"), start, KB_ANY, 120,
+                          slot == 0 ? tr("A hub server's name or address, such as http://name or name:port. Empty: the default. Off: none.")
+                                    : tr("A second hub server, typed as Server 1. Empty: none."),
+                          [slot](const std::string& typed, std::string& error) {
+                              const size_t from = typed.find_first_not_of(" \t"), to = typed.find_last_not_of(" \t");
+                              std::string t = from == std::string::npos ? "" : typed.substr(from, to - from + 1);
+                              const bool off = slot == 0 && !strcasecmp(t.c_str(), "off");
+                              mh4n::hub::Endpoint e;
+                              if (!t.empty() && !off && !mh4n::hub::ParseEndpoint(t, &e)) {
+                                  error = tr("Type one server name, such as host or host:port.");
+                                  return false;
+                              }
+                              if (slot == 0 && !strcasecmp(t.c_str(), mh4n::hub::kDefaultServers)) t.clear();  // (the default stays the default)
+                              net_hub_server_slot_set(slot, t);
+                              return true;
+                          });
+        };
+        r.push_back(std::move(row));
+    }
+    action(r, "net.hub.reset", tr("Restore the default servers"), []() {
+        net_hub_server_slot_set(0, "");
+        net_hub_server_slot_set(1, "");
+    }, true, "HubReset");
     const std::string key = app_setting("Network", "HubKey", "");
     Row krow;
     krow.id = "net.hub.key", krow.title = tr("Matchmaking key"), krow.key = "HubKey";
@@ -1615,19 +1679,21 @@ void hub_rows(std::vector<Row>& r) {
                       });
     };
     r.push_back(std::move(krow));
-    Row frow;
-    frow.id = "net.hub.family", frow.title = tr("Game"), frow.key = "HubFamily";
-    const int fam = hub_family_index();
-    frow.value = fam == 0 ? std::string(tr("The running game")) : fam == 1 ? "MH4U (USA, EUR)" : "MH4G (JPN, KOR)";
-    frow.help = say("Which game's hubs to list. The running game is the default: MH4G's Korean copy is not recognized yet, so choose MH4G by hand for it.",
-                    "De qué juego se listan los hubs. Por defecto, el del juego en marcha: la copia coreana de MH4G aún no se reconoce, elige MH4G a mano para ella.");
-    frow.menu = true;
-    Row fcopy = frow;
-    frow.activate = [fcopy, fam]() {
-        choices(fcopy, {tr("The running game"), "MH4U (USA, EUR)", "MH4G (JPN, KOR)"}, fam,
-                [](int v) { app_setting_set("Network", "HubFamily", HUB_FAMILIES[std::clamp(v, 0, 2)]); });
-    };
-    r.push_back(std::move(frow));
+    if (kHubFamilyPicker) {  // (hidden while every region plays together: mh4n::hub::kCrossRegion)
+        Row frow;
+        frow.id = "net.hub.family", frow.title = tr("Game"), frow.key = "HubFamily";
+        const int fam = hub_family_index();
+        frow.value = fam == 0 ? std::string(tr("The running game")) : fam == 1 ? "MH4U (USA, EUR)" : "MH4G (JPN, KOR)";
+        frow.help = say("Which game's hubs to list. The running game is the default: MH4G's Korean copy is not recognized yet, so choose MH4G by hand for it.",
+                        "De qué juego se listan los hubs. Por defecto, el del juego en marcha: la copia coreana de MH4G aún no se reconoce, elige MH4G a mano para ella.");
+        frow.menu = true;
+        Row fcopy = frow;
+        frow.activate = [fcopy, fam]() {
+            choices(fcopy, {tr("The running game"), "MH4U (USA, EUR)", "MH4G (JPN, KOR)"}, fam,
+                    [](int v) { app_setting_set("Network", "HubFamily", HUB_FAMILIES[std::clamp(v, 0, 2)]); });
+        };
+        r.push_back(std::move(frow));
+    }
     const NetHubCheck check = net_hub_checked();
     action(r, "net.hub.check", tr("Check hub servers"), []() { net_hub_check(); }, !check.busy, "HubCheck");
     r.back().value = check.busy ? std::string(tr("Asking...")) : std::string();
@@ -2429,17 +2495,29 @@ std::vector<Row> main_rows(bool* open) {
             row.adjust = [](int d) { s.draft.camera = std::clamp(std::round((s.draft.camera + d * .05f) * 20) / 20.f, .2f, 5.f); };
             r.push_back(std::move(row));
         }
-        add_choice(r, "touch.style", "Attack buttons", c.attack_style, {tr("Pill"), tr("Two buttons"), tr("Corner band")},
-                   [](int v) { s.draft.attack_style = v; }, "attack_style");
+        add_choice(r, "touch.scheme", "Touch layout", c.scheme, {tr("Adaptive"), tr("Traditional")},
+                   [](int v) { s.draft.scheme = v; }, "touch_scheme");
+        if (c.scheme == 0) {  // (Traditional has A, B, X and Y of their own, and runs with R)
+            add_choice(r, "touch.style", "Attack buttons", c.attack_style, {tr("Pill"), tr("Two buttons"), tr("Corner band")},
+                       [](int v) { s.draft.attack_style = v; }, "attack_style");
+        } else {
+            add_bool(r, "touch.autorun", "Run with the stick", &c.auto_run, "touch_auto_run");
+        }
         action(r, "touch.buttons", tr("Buttons on the screen"), []() {
             s_combos_alone = false;
             push(View::Buttons, "tb.0");
         });
         r.back().help = tr("Choose which of the game's buttons show on the screen, and add buttons of your own that press several at once.");
         {
-            int shown = 0;
-            for (char on : c.show) shown += on != 0;
-            r.back().value = std::to_string(shown) + " / " + std::to_string(TB);
+            int shown = 0, all = TB;
+            if (c.scheme == 1) {
+                all = 0;
+                for (int i = 0; i < TB; i++)
+                    if (trad_button(TOUCH_BUTTONS[i].key)) all++, shown += c.tshow[i] != 0;
+            } else {
+                for (char on : c.show) shown += on != 0;
+            }
+            r.back().value = std::to_string(shown) + " / " + std::to_string(all);
         }
         action(r, "touch.edit", tr("Customize controls and HUD"),
                [open]() {
@@ -2717,6 +2795,36 @@ std::vector<Row> rows_for_view(bool* open) {
         pad_map_rows(r);
         return r;
     }
+    if (s.view == View::Buttons && s.draft.scheme == 1 && !s_combos_alone) {  // (Traditional: its own buttons, all of the controller's)
+        header(r, "tb.head.trad", tr("Traditional layout"));
+        for (int i = 0; i < TB; i++) {
+            const char* title = trad_button(TOUCH_BUTTONS[i].key);
+            if (!title) continue;
+            Row row;
+            bool on = s.draft.tshow[i] != 0;
+            row.id = "tb." + std::to_string(i), row.title = tr(title);
+            row.key = std::string("trad_show_") + TOUCH_BUTTONS[i].key;
+            row.value = tr(on ? "On" : "Off");
+            row.toggle = on;
+            row.adjust = [i](int d) { s.draft.tshow[i] = d > 0; };
+            row.activate = [i]() { s.draft.tshow[i] = !s.draft.tshow[i]; };
+            r.push_back(std::move(row));
+        }
+        header(r, "tc.head", tr("Combined buttons"));
+        for (int k = 0; k < 6; k++) {
+            char title[48];
+            snprintf(title, sizeof title, tr("Button %d"), k + 1);
+            action(r, "tc." + std::to_string(k), title, [k]() {
+                s_combo = k;
+                push(View::ComboEdit, "ce.0");
+            });
+            r.back().value = s.draft.combo[k].empty() ? tr("Empty") : s.draft.combo[k];
+            r.back().help = tr("A button of your own presses several of the game's together (A+X, say). Place it with Customize controls and HUD.");
+        }
+        action(r, "tb.back", tr("Back"), []() { pop(); });
+        r.back().arrow = false;
+        return r;
+    }
     if (s.view == View::Buttons) {
         const char* groups[] = {"Hunting", "Bows and bowguns", "Menus and the rest"};
         for (int g = 0; g < 3 && !s_combos_alone; g++) {
@@ -2942,6 +3050,10 @@ const Help HELP[] = {
      "Automático: se ven mientras no haya un mando conectado. Nunca: solo queda el botón de opciones."},
     {"opacity", "How solid the touch controls look.", "Qué tan sólidos se ven los controles táctiles."},
     {"camera_speed", "How far the camera turns for a drag.", "Cuánto gira la cámara al arrastrar."},
+    {"touch_scheme", "Adaptive: the buttons change with what you do: the menus' and the bows' and bowguns' own. Traditional: as an emulator's, the same buttons always: A B X Y, L R ZL ZR, START, SELECT, the d-pad. Each keeps its own places (Customize controls and HUD).",
+     "Adaptable: los botones cambian con lo que haces: los de los menús y los de arcos y ballestas. Tradicional: como en un emulador, siempre los mismos botones: A B X Y, L R ZL ZR, START, SELECT, la cruceta. Cada una guarda sus propias posiciones (Personalizar controles y HUD)."},
+    {"touch_auto_run", "Traditional layout: the thumb pushed past the stick's rim runs (R held). Off: only the R button runs, as with a controller.",
+     "Disposición tradicional: el pulgar empujado más allá del borde del stick corre (R mantenido). No: solo el botón R corre, como con un mando."},
     {"attack_style", "Pill: A on its upper half, X on the lower, both on the seam. Two buttons: A and X apart. Corner band: the attacks and the guard round the screen's corner.",
      "Píldora: A en su mitad de arriba, X en la de abajo, las dos en la unión. Dos botones: A y X separados. Banda en la esquina: los ataques y la guardia alrededor de la esquina."},
     {"editor", "Move and resize each control: drag one, pinch it or use - and + for its size, then Save. Holding the settings button opens it too.",
@@ -3026,7 +3138,14 @@ const Help HELP[] = {
      "Busca salas creadas por teléfonos en la misma Wi-Fi que este (Crear una sala, en el otro teléfono), así no hay que escribir ninguna dirección. Tarda un segundo y medio. Un toque en una sala encontrada entra."},
     {"HubUse", "Uses the hub servers below instead of a room: the game's Local Play then finds the hubs they list. Do it before going to the Gathering Hall.", "Usa los servidores de hubs de abajo en vez de una sala: el juego local (Local Play) encuentra entonces los hubs que listan. Hazlo antes de ir al Gathering Hall."},
     {"HubStop", "Stops using the hub servers (your hub, if you made one, closes).", "Deja de usar los servidores de hubs (tu hub, si creaste uno, se cierra)."},
-    {"HubServers", "The hub servers, by name or IP (and :port if it is not 39510), separated by spaces. Everyone who plays together must use the same ones. Empty: MHGU's public servers. A hub you make is listed on all of them.", "Los servidores de hubs, por nombre o IP (y :puerto si no es 39510), separados por espacios. Quienes juegan juntos deben usar los mismos. Vacío: los servidores públicos de MHGU. Un hub que creas se lista en todos."},
+    {"HubServer1", "The first hub server, by name or address (http://name is fine; add :port if it is not 39510). The default is http://meoli.viewdns.net. Empty: the default. Off: none. Everyone who plays together must use the same ones.",
+     "El primer servidor de hubs, por nombre o dirección (sirve http://nombre; agrega :puerto si no es 39510). El predeterminado es http://meoli.viewdns.net. Vacío: el predeterminado. Off: ninguno. Quienes juegan juntos deben usar los mismos."},
+    {"HubServer2", "A second hub server, typed like the first. Empty: none. Hubs are listed on both and a search asks both.",
+     "Un segundo servidor de hubs, escrito como el primero. Vacío: ninguno. Los hubs se listan en los dos y la búsqueda le pregunta a los dos."},
+    {"HubCrossplay", "Off: hub servers only; joining a room replaces them. Citra/Azahar Rooms: hub servers and a room at the same time, as in MHGU: a room you join keeps the hubs, and a hub you create in the game is in the room too. Applies to the next room you join.",
+     "No: solo servidores de hubs; entrar a una sala los reemplaza. Salas de Citra/Azahar: servidores de hubs y una sala a la vez, como en MHGU: una sala a la que entras conserva los hubs, y un hub que creas en el juego también está en la sala. Se aplica a la próxima sala a la que entres."},
+    {"HubReset", "Server 1 goes back to the default (http://meoli.viewdns.net) and Server 2 is emptied.",
+     "El Servidor 1 vuelve al predeterminado (http://meoli.viewdns.net) y el Servidor 2 se vacía."},
     {"HubKey", "A word your group agrees on: only players with the same key see each other's hubs. Empty: your hubs are public to everyone without a key. The server gets a hash of it, never the key.", "Una palabra que acuerda tu grupo: solo los jugadores con la misma clave ven los hubs de los demás. Vacía: tus hubs son públicos para todos sin clave. El servidor recibe un hash, nunca la clave."},
     {"HubCheck", "Asks each hub server whether it answers, how fast, and how many hubs of this game it lists.", "Le pregunta a cada servidor de hubs si responde, qué tan rápido, y cuántos hubs de este juego lista."},
     {"Refresh", "Asks the lobby above for its rooms again (the tab asks it by itself as it opens). A tap on one joins it.", "Le vuelve a pedir sus salas al lobby de arriba (la pestaña se las pide sola al abrirse). Un toque en una entra."},

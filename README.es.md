@@ -40,6 +40,11 @@ Habla con otros jugadores y pide ayuda en el [Discord](https://discord.gg/sk5xEj
   corriendo, y giras con la cámara, hasta que vuelvas a tocar la palanca o el círculo, desenvaines o abras un menú. Para
   correr solo mientras mantienes un botón: engranaje, **Controles**, **Botones en la pantalla**, desactiva **Correr con la
   palanca**, y aparece un botón **Correr**
+- **Disposición tradicional:** engranaje, **Controles**, **Disposición táctil**, **Tradicional**. En vez de que los controles
+  cambien con lo que haces (la píldora, los de los menús, los de arcos y ballestas), tienes los de un emulador: A, B, X e Y en
+  rombo a la derecha, L, R, ZL y ZR en las esquinas de arriba, START y SELECT arriba, la cruceta sobre el stick, siempre
+  iguales. Tiene sus propias posiciones (**Personalizar controles y HUD**) y sus propios **Botones en pantalla**; el stick solo
+  corre con **Correr con el stick**, si no mantén R. Volver a **Adaptable** conserva las dos
 - **Fijar objetivo:** mantén el botón de la cámara (L)
 - **Barra de objetos sin cruceta:** toca la barra de objetos del juego para usar el objeto, deslízala para cambiarlo
 - **Arcos y ballestas** tienen su propio diseño: un disparo grande, recarga, apuntar, fuego agachado o capas, y flechas
@@ -329,6 +334,15 @@ adb install -r -i com.mh4u.native MH4U-<version>.apk
 ```
 
 Usa el nombre del APK que descargaste. Es opcional: el juego anda igual sin esto.
+
+### Otros nombres de paquete
+
+El modo de rendimiento de algunos teléfonos conoce una app por el nombre de su paquete. Cada versión trae la misma app con tres
+más: `MH4U-<versión>-antutu.apk` (`com.antutu.ABenchMark`), `MH4U-<versión>-ludashi.apk` (`com.ludashi.benchmark`) y
+`MH4U-<versión>-alt.apk` (`com.mh4u.native.alt`, una segunda instalación junto a la normal). Solo cambian el nombre del paquete
+y el de la app. Cada paquete guarda su propia carpeta en `Android/data` (sus partidas y ajustes también), así que no los
+comparten, y los de antutu y ludashi no se pueden instalar sobre las apps reales de esos benchmarks. Usa el nombre del que
+instales en la línea `adb install -i` de arriba.
 
 ## Si algo sale mal
 

@@ -43,6 +43,10 @@ NetProblem net_host(const std::string& port, int slots, const std::string& nickn
 // This phone's IPv4 addresses (not the loopback), the ones others join a room it hosts at: Wi-Fi's first
 std::vector<std::string> net_local_addresses();
 void net_leave();       // leaves the room (a room this phone hosts stays open)
+// Crossplay ([Network] Crossplay, Settings -> Multiplayer): hub servers and a Citra/Azahar room at the same time, as MHGU's.
+// Off: hub servers only, a room joined replaces them.
+bool net_crossplay();
+void net_leave_hubs();  // stops using hub servers (a room joined stays)
 void net_close_room();  // leaves, and closes the room this phone hosts
 // Sends a chat line to the room (and keeps it as this phone's): false when not in a room.
 bool net_say(const std::string& text);
@@ -57,8 +61,15 @@ void net_lobby_fetch(const std::string& url);
 NetLobby net_lobby();
 
 // ---- hub servers (mh4n/hub.h): the same local play through an MHGURecomp hub server instead of a room. Set in
-// mh4u-app.ini's [Network] (HubServers, HubKey, HubFamily: auto, 4U or 4G), and used by the Multiplayer tab's "Hub
-// servers" section. Only players of the same game family (and matchmaking key) see each other's hubs.
+// mh4u-app.ini's [Network] (HubServer1, HubServer2, HubKey; HubFamily is not used while mh4n::hub::kCrossRegion is on), and
+// used by the Multiplayer tab's "Hub servers" section. Players of every region with the same matchmaking key see each
+// other's hubs.
+// The two server fields: slot 0 (Server 1: empty is the default server, "off" none) and slot 1 (Server 2: empty is none).
+// The text is as typed. A file of an older version, with the one list HubServers, gives its first words to the fields.
+std::string net_hub_server_slot(int slot);
+void net_hub_server_slot_set(int slot, const std::string& text);
+// Both fields as the one text the hub client takes (mh4n::hub::ParseServers)
+std::string net_hub_servers_text();
 // Starts using the servers the settings name (a room joined or hosted is left): the answer comes as the client's state.
 bool net_hub_join(std::string* error);
 // Asks each server (on a thread of its own) whether it answers, and how many hubs of this game it lists

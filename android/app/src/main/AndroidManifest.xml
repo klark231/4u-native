@@ -83,7 +83,7 @@
             android:excludeFromRecents="true"
             android:exported="false" />
         <provider android:name=".LogProvider"
-            android:authorities="com.mh4u.native.logs"
+            android:authorities="${applicationId}.logs"
             android:process=":share"
             android:exported="false"
             android:grantUriPermissions="true" />

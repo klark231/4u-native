@@ -33,7 +33,10 @@ void touch_toggle_bottom();
 void touch_set_bottom_default(bool shown);
 // The controls' settings (the settings panel's Controls tab), by their keys in touch_layout.txt: "controls" (auto, on,
 // off), "opacity" (0.20 .. 1.00), "camera_speed" (0.20 .. 5.00), "attack_style" (0 the pill, 1 two buttons, 2 the corner
-// band) and "show_<button>" (1 shown, 0 hidden: show_attacks, show_dodge, ...). Empty for a key that isn't one.
+// band, of the Adaptive layout) and "show_<button>" (1 shown, 0 hidden: show_attacks, show_dodge, ...). "scheme" is the
+// layout in use ("adaptive" or "traditional": an emulator's A B X Y, L R ZL ZR, START, SELECT, d-pad and stick, the same
+// always), "trad_show_<button>" the buttons that layout shows, "auto_run" (1, 0) whether its stick runs. Empty for a key
+// that isn't one.
 std::string touch_setting(const std::string& key);
 // Sets one at once and saves touch_layout.txt (a value out of its range is brought into it).
 void touch_set_setting(const std::string& key, const std::string& value);

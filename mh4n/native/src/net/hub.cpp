@@ -78,6 +78,9 @@ const char* FamilyName(Family family) {
 }
 
 u16 LinkProtocol(Family family) {
+    if (kCrossRegion) {
+        return kLinkMh4u;  // (all regions together: see kCrossRegion)
+    }
     return family == Family::Mh4g ? kLinkMh4g : kLinkMh4u;
 }
 
@@ -120,6 +123,16 @@ bool ParseEndpoint(std::string_view text, Endpoint* out) {
     }
     while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) {
         text.remove_suffix(1);
+    }
+    // (an address as it is pasted from a browser: http://name, https://name:port/)
+    for (const std::string_view scheme : {std::string_view("http://"), std::string_view("https://")}) {
+        if (text.size() >= scheme.size() && IEquals(text.substr(0, scheme.size()), scheme)) {
+            text.remove_prefix(scheme.size());
+            break;
+        }
+    }
+    if (const std::size_t slash = text.find('/'); slash != std::string_view::npos) {
+        text = text.substr(0, slash);
     }
     Endpoint e;
     const std::size_t colon = text.rfind(':');

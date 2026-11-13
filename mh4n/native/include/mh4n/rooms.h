@@ -154,6 +154,8 @@ struct HubRequest {
     std::string key;              ///< the matchmaking key: only players with the same key see each other's hubs
     std::string family = "auto";  ///< "auto" (the running game's), "4u" or "4g"
     std::string console_id_hash;  ///< empty: the running game's (PublishConsole)
+    bool keep_room = false;       ///< crossplay: a room this client is in stays, and the game's frames go to both (see
+                                  ///< JoinRequest::keep_hubs); false: the hubs replace the room
 };
 
 struct HubServerStatus {
@@ -226,6 +228,8 @@ struct JoinRequest {
                                      ///< without a lobby ignore it)
     std::string console_id_hash;     ///< empty: the running game's (PublishConsole)
     std::optional<MacAddress> preferred_mac;  ///< none: the room gives one (Azahar's NoPreferredMac)
+    bool keep_hubs = false;  ///< crossplay: hub servers in use stay (the room is asked for the hubs' MAC address, so the game
+                             ///< has one), and the game's frames go to both; false: the room replaces the hubs
 };
 
 /// Something that happened in the room, for the app's chat and notices.
@@ -255,6 +259,7 @@ struct Status {
     State state = State::Idle;
     Error error = Error::None;   ///< the last failure (cleared by the next Join)
     bool waiting_for_console = false;  ///< Joining, and waiting for the game to publish its console ID
+    bool room_session = false;   ///< a room (not only hub servers) is joined or being joined: `state` is then the room's
     std::string host;            ///< the room joined (or being joined)
     u16 port = 0;
     std::string nickname;
@@ -289,6 +294,10 @@ public:
     /// Leaves the room (a Join that waits is cancelled). Returns at once; the goodbye to the room finishes on that
     /// join's network thread (at most 5 s), while a following Join starts on a thread of its own.
     void Leave();
+    /// Leaves the room only: hub servers in use go on (the state goes back to them). Like Leave if there are none.
+    void LeaveRoom();
+    /// Stops using hub servers only: a room joined stays.
+    void LeaveHubs();
     /// Waits until the client is not Joining any more, or `timeout_ms` passed. True when it is in a room.
     bool WaitJoined(int timeout_ms);
 
@@ -335,6 +344,8 @@ Client& Default();
 // The default client's functions, as described in Client.
 bool Join(const JoinRequest& request, std::string* error = nullptr);
 void Leave();
+void LeaveRoom();
+void LeaveHubs();
 bool WaitJoined(int timeout_ms);
 Status GetStatus();
 std::vector<Event> TakeEvents();
