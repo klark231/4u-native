@@ -1,6 +1,7 @@
 // The app's side of the network rooms (net_rooms.h).
 #include "net_rooms.h"
 
+#include "app_settings.h"
 #include "chat_app.h"
 #include "net_lan.h"
 
@@ -9,6 +10,8 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
+
+#include <strings.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -51,21 +54,33 @@ LobbyState& lobby_state() {
 
 void net_poll() {
     net_lan_poll();  // (the answers to searches on this Wi-Fi while this phone hosts a room)
+    // Hub servers are always on, as in MHGU: used at the first frame (Server 1 "off" and no Server 2: none). The game's
+    // Local Play then finds hubs with nothing to press; the hub waits for the game's console ID by itself (Client::JoinHubs).
+    static bool auto_used = false;
+    if (!auto_used) {
+        auto_used = true;
+        net_hub_apply();
+    }
     std::vector<rooms::Event> events = rooms::TakeEvents();
     if (events.empty()) return;
     const rooms::Status status = rooms::GetStatus();  // (this phone's nickname, the room's name)
+    // (the hub servers also show as Joined: only a room (room_session) is "you joined", "you left")
+    static bool g_real_room = false;
+    if (g_real_room && !status.room_session && status.state != rooms::State::Idle) g_real_room = false;
     // (the room lost or refused: its state comes before the failure, in the same batch; "you left" only without one)
     bool failed = false, left = false;
     for (const rooms::Event& e : events) {
         NetLine line;
         switch (e.kind) {
         case rooms::Event::Kind::StateChanged:
-            if (in_room(e.state) && !in_room(g_state)) {
+            if (status.room_session && in_room(e.state) && !in_room(g_state)) {
                 line.kind = NetLine::YouJoined;
                 line.text = status.room.name;
                 add(line);
-            } else if (e.state == rooms::State::Idle && in_room(g_state)) {
+                g_real_room = true;
+            } else if (e.state == rooms::State::Idle && g_real_room) {
                 left = true;
+                g_real_room = false;
             }
             g_state = e.state;
             break;
@@ -135,6 +150,60 @@ bool net_parse_address(const std::string& typed, std::string* host, std::uint16_
     return true;
 }
 
+int net_play_with() {
+    const std::string v = app_setting("Network", "PlayWith", "");
+    if (v == "rooms") return PLAY_ROOMS;
+    if (v == "mixed") return PLAY_MIXED;
+    if (v.empty() && app_setting_bool("Network", "Crossplay", false)) return PLAY_MIXED;  // (an earlier build's choice)
+    return PLAY_HUBS;
+}
+bool net_uses_hubs() { return net_play_with() != PLAY_ROOMS; }
+bool net_uses_rooms() { return net_play_with() != PLAY_HUBS; }
+bool net_crossplay() { return net_play_with() == PLAY_MIXED; }
+
+void net_hub_apply() {
+    if (!net_uses_hubs() || mh4n::hub::ParseServers(net_hub_servers_text()).empty()) {  // (Server 1 "off", Server 2 empty: none)
+        if (rooms::GetHubStatus().active) net_leave_hubs();
+        return;
+    }
+    // (hubs only, or rooms only: a room joined replaces the hubs and they are not started over one; Mixed keeps both)
+    if (!rooms::GetStatus().room_session || net_crossplay()) {
+        std::string error;
+        net_hub_join(&error);
+    }
+}
+
+void net_set_play_with(int mode) {
+    mode = mode == PLAY_ROOMS ? PLAY_ROOMS : mode == PLAY_MIXED ? PLAY_MIXED : PLAY_HUBS;
+    app_setting_set("Network", "PlayWith", mode == PLAY_ROOMS ? "rooms" : mode == PLAY_MIXED ? "mixed" : "hubs");
+    app_setting_set("Network", "Crossplay", "0");  // (the earlier build's: no longer read once PlayWith is there)
+    app_settings_save();
+    const rooms::Status st = rooms::GetStatus();
+    const bool hubs = rooms::GetHubStatus().active;
+    if (mode == PLAY_HUBS) {
+        if (st.room_session) {
+            if (hubs) rooms::LeaveRoom();  // (hub servers only: the room goes, the hubs stay)
+            else rooms::Leave();
+        }
+        if (!hubs) net_hub_apply();
+    } else if (mode == PLAY_ROOMS) {
+        if (hubs) net_leave_hubs();  // (rooms only: the hubs go, a room stays)
+    } else if (!hubs) {
+        net_hub_apply();
+    }
+}
+
+namespace {
+// Leaves the room; with crossplay the hub servers in use stay, as they do while a room is joined
+void leave_room_only() {
+    if (net_crossplay()) {
+        rooms::LeaveRoom();
+    } else {
+        rooms::Leave();
+    }
+}
+}  // namespace
+
 NetProblem net_join(const std::string& address, const std::string& nickname, const std::string& password) {
     if (!rooms::ValidNickname(nickname)) return NetProblem::Nickname;
     rooms::JoinRequest request;
@@ -144,9 +213,10 @@ NetProblem net_join(const std::string& address, const std::string& nickname, con
     for (const std::string& mine : net_local_addresses()) own = own || request.host == mine;
     own = own && request.port == status.hosted_port;
     if (status.hosting && !own) {  // (one room at a time)
-        rooms::Leave();
+        leave_room_only();
         rooms::CloseRoom();
     }
+    request.keep_hubs = net_crossplay();
     request.nickname = nickname;
     request.password = password;
     // (no console ID: the running game's, which the runtime publishes at boot; a join before that waits for it)
@@ -164,7 +234,7 @@ NetProblem net_host(const std::string& port_text, int slots, const std::string& 
     if (!rooms::ValidNickname(nickname)) return NetProblem::Nickname;
     std::uint16_t port = 0;
     if (!net_parse_port(port_text, &port)) return NetProblem::Port;
-    rooms::Leave();
+    leave_room_only();
     rooms::CloseRoom();
     rooms::HostRequest request;
     request.port = port;
@@ -206,11 +276,23 @@ std::vector<std::string> net_local_addresses() {
 }
 
 void net_leave() {
-    rooms::Leave();
+    if (net_crossplay() && rooms::GetStatus().room_session) {
+        rooms::LeaveRoom();  // (the hub servers go on)
+    } else {
+        rooms::Leave();
+    }
+}
+
+void net_leave_hubs() {
+    if (rooms::GetStatus().room_session) {
+        rooms::LeaveHubs();  // (the room stays)
+    } else {
+        rooms::Leave();
+    }
 }
 
 void net_close_room() {
-    rooms::Leave();
+    leave_room_only();
     rooms::CloseRoom();
     std::fprintf(stderr, "[Info] App: room: closed\n");
 }
@@ -247,4 +329,121 @@ NetLobby net_lobby() {
     LobbyState& state = lobby_state();
     std::lock_guard lock(state.mutex);
     return state.lobby;
+}
+
+// ---- hub servers
+namespace {
+struct HubCheckState {
+    std::mutex mutex;
+    NetHubCheck check;
+};
+HubCheckState& hub_check_state() {
+    static HubCheckState* state = new HubCheckState;  // (never freed: its thread may outlive the app's end)
+    return *state;
+}
+// The hub servers, one text in [Network] HubServers (the servers apart by spaces or commas; empty: the default server,
+// "off": none). A value that is not in the file is "\x01" here, to tell it from an empty one.
+const char* const kAbsent = "\x01";
+std::vector<std::string> SplitServers(const std::string& text) {
+    std::vector<std::string> words;
+    std::string cur;
+    for (const char ch : text + " ") {
+        if (ch == ' ' || ch == ',' || ch == ';' || ch == '\t' || ch == '\n' || ch == '\r') {
+            if (!cur.empty()) words.push_back(cur);
+            cur.clear();
+        } else {
+            cur += ch;
+        }
+    }
+    return words;
+}
+bool IsOff(const std::vector<std::string>& words) {
+    return words.size() == 1 && !strcasecmp(words[0].c_str(), "off");
+}
+// The list as the file has it. A file of the previous build has two fields instead (HubServer1: empty the default, "off"
+// none; HubServer2: more servers): read as the one list they made.
+std::vector<std::string> HubListStored() {
+    const std::string list = app_setting("Network", "HubServers", kAbsent);
+    if (list != kAbsent) {
+        const std::vector<std::string> words = SplitServers(list);
+        if (words.empty()) return SplitServers(mh4n::hub::kDefaultServers);
+        return IsOff(words) ? std::vector<std::string>() : words;
+    }
+    const std::string a = app_setting("Network", "HubServer1", kAbsent), b = app_setting("Network", "HubServer2", kAbsent);
+    if (a == kAbsent && b == kAbsent) return SplitServers(mh4n::hub::kDefaultServers);
+    std::vector<std::string> out;
+    const std::vector<std::string> first = a == kAbsent ? std::vector<std::string>() : SplitServers(a);
+    if (a == kAbsent || first.empty()) out = SplitServers(mh4n::hub::kDefaultServers);
+    else if (!IsOff(first)) out = first;
+    if (b != kAbsent)
+        for (const std::string& w : SplitServers(b)) out.push_back(w);
+    return out;
+}
+
+mh4n::hub::Family hub_check_family() {
+    const auto choice = mh4n::hub::ParseFamilyChoice(app_setting("Network", "HubFamily", "auto"));
+    if (choice == mh4n::hub::FamilyChoice::Mh4g) return mh4n::hub::Family::Mh4g;
+    return mh4n::hub::Family::Mh4u;  // (auto: the game is not running here: MH4U's USA and EUR are what this app plays)
+}
+}  // namespace
+
+std::vector<std::string> net_hub_server_list() { return HubListStored(); }
+
+bool net_hub_server_list_set(const std::vector<std::string>& list) {
+    if (list.size() > mh4n::hub::kMaxServers) return false;
+    std::string text;
+    for (const std::string& one : list) text += (text.empty() ? "" : " ") + one;
+    if (text.empty()) text = "off";  // (none: not empty, which is the default)
+    else if (!strcasecmp(text.c_str(), mh4n::hub::kDefaultServers)) text.clear();  // (the default stays the default)
+    app_setting_set("Network", "HubServers", text);
+    app_setting_remove("Network", "HubServer1");  // (the previous build's two fields: the list replaces them)
+    app_setting_remove("Network", "HubServer2");
+    return true;
+}
+
+std::string net_hub_servers_text() {
+    std::string text;
+    for (const std::string& one : HubListStored()) text += (text.empty() ? "" : " ") + one;
+    return text.empty() ? "off" : text;
+}
+
+bool net_hub_join(std::string* error) {
+    rooms::HubRequest request;
+    request.keep_room = net_crossplay();
+    request.servers = net_hub_servers_text();
+    request.key = app_setting("Network", "HubKey", "");
+    request.family = app_setting("Network", "HubFamily", "auto");
+    if (request.family.empty()) request.family = "auto";
+    if (!rooms::JoinHubs(request, error)) {
+        std::fprintf(stderr, "[Info] App: hub servers: %s\n", error ? error->c_str() : "refused");
+        return false;
+    }
+    std::fprintf(stderr, "[Info] App: hub servers: in use\n");
+    return true;
+}
+
+void net_hub_check() {
+    HubCheckState& state = hub_check_state();
+    {
+        std::lock_guard lock(state.mutex);
+        if (state.check.busy) return;
+        state.check.busy = true;
+        state.check.done = false;
+    }
+    const std::vector<mh4n::hub::Endpoint> servers = mh4n::hub::ParseServers(net_hub_servers_text());
+    const std::string key = app_setting("Network", "HubKey", "");
+    const mh4n::hub::Family family = hub_check_family();
+    std::thread([servers, key, family, &state] {
+        std::vector<mh4n::hub::ServerCheck> out = mh4n::hub::CheckServers(servers, family, key, 5000);
+        std::lock_guard lock(state.mutex);
+        state.check.servers = std::move(out);
+        state.check.busy = false;
+        state.check.done = true;
+    }).detach();
+}
+
+NetHubCheck net_hub_checked() {
+    HubCheckState& state = hub_check_state();
+    std::lock_guard lock(state.mutex);
+    return state.check;
 }

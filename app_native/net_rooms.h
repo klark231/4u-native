@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "mh4n/hub.h"
 #include "mh4n/rooms.h"
 
 // Something the room said, or this phone did in it, for the chat and the notices over the game
@@ -42,6 +43,20 @@ NetProblem net_host(const std::string& port, int slots, const std::string& nickn
 // This phone's IPv4 addresses (not the loopback), the ones others join a room it hosts at: Wi-Fi's first
 std::vector<std::string> net_local_addresses();
 void net_leave();       // leaves the room (a room this phone hosts stays open)
+// Crossplay ([Network] Crossplay, Settings -> Multiplayer): hub servers and a Citra/Azahar room at the same time, as MHGU's.
+// Off: hub servers only, a room joined replaces them.
+// What to play online with ([Network] PlayWith, Settings > Multiplayer > Play online with): this app's hub
+// servers only (the default), a Citra Room (Azahar / Citra) only, or Mixed: both at once. In Mixed the game's frames go to both, so a
+// hub the game hosts is also in the room: Azahar and Citra players in it play with the hub servers' players too, all of them
+// reaching the one that hosts.
+enum NetPlayWith { PLAY_HUBS = 0, PLAY_ROOMS = 1, PLAY_MIXED = 2 };
+int net_play_with();
+void net_set_play_with(int mode);  // saves it, and applies it now: the hubs or the room that the mode leaves out end
+bool net_uses_hubs();              // hubs or Mixed
+bool net_uses_rooms();             // rooms or Mixed
+bool net_crossplay();              // Mixed: hubs and a room together
+void net_hub_apply();              // uses the servers now (after one was changed): none, or not in this mode, stops the hubs
+void net_leave_hubs();  // stops using hub servers (a room joined stays)
 void net_close_room();  // leaves, and closes the room this phone hosts
 // Sends a chat line to the room (and keeps it as this phone's): false when not in a room.
 bool net_say(const std::string& text);
@@ -54,3 +69,26 @@ struct NetLobby {
 };
 void net_lobby_fetch(const std::string& url);
 NetLobby net_lobby();
+
+// ---- hub servers (mh4n/hub.h): the same local play through an MHGURecomp hub server instead of a room. Set in
+// mh4u-app.ini's [Network] (HubServers, HubKey; HubFamily is not used while mh4n::hub::kCrossRegion is on), and
+// used by the Multiplayer tab's "Hub servers" section. Players of every region with the same matchmaking key see each
+// other's hubs.
+// The servers as a list ([Network] HubServers: the servers apart by spaces; empty is the default server, "off" none; up to
+// mh4n::hub::kMaxServers). net_hub_server_list gives them as they are used (the default one when none was typed, none
+// when it is off); _set saves a list (an empty one is "off"; false: too many). A file of the previous build, with the two
+// fields HubServer1 and HubServer2, is read as the list they made, and they go when a list is saved. Call net_hub_apply
+// after a change.
+std::vector<std::string> net_hub_server_list();
+bool net_hub_server_list_set(const std::vector<std::string>& list);
+// The list as the one text the hub client takes (mh4n::hub::ParseServers): "off" when there are none
+std::string net_hub_servers_text();
+// Starts using the servers the settings name (a room joined or hosted is left): the answer comes as the client's state.
+bool net_hub_join(std::string* error);
+// Asks each server (on a thread of its own) whether it answers, and how many hubs of this game it lists
+struct NetHubCheck {
+    bool busy = false, done = false;
+    std::vector<mh4n::hub::ServerCheck> servers;
+};
+void net_hub_check();
+NetHubCheck net_hub_checked();

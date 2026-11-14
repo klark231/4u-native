@@ -506,8 +506,17 @@ hace con los pasos propios del juego.
 
 ## Jugar con otros
 
-El modo local del juego pasa por una sala de red, del mismo tipo que usa Azahar: jugadores de esta app y de Azahar pueden
-compartir una.
+El modo local del juego pasa por **servidores de hubs** (lo predeterminado) o por una sala de red, del mismo tipo que usa
+Azahar: jugadores de esta app y de Azahar pueden compartir una. Engranaje, **Multijugador**, **Jugar con emuladores**,
+**Jugar en línea con** elige: **Los hubs de esta app**, **Salas de Azahar / Citra**, o **Mixto**, las dos a la vez. En
+**Mixto** puedes estar en los servidores de hubs y en una sala de Azahar o Citra juntos, y si creas la sala en el juego, los
+jugadores de Azahar y Citra de la sala juegan también con los de los servidores de hubs (todos llegan a tu juego).
+
+**Servidores de hubs:** engranaje, **Multijugador**, **Servidores de hubs**: el **Servidor 1** es `http://meoli.viewdns.net`
+y se puede cambiar; el **Servidor 2** está vacío (escribe `off` en el Servidor 1 para ninguno). Un nombre o dirección, con o
+sin `http://`, y `:puerto` si no es 39510. Siempre están activos, sin nada que apretar: el juego local (Local Play) encuentra
+los hubs que listan, de todas las regiones (USA, EUR, JPN, KOR). Quienes juegan juntos usan los mismos servidores y la misma
+**Clave de emparejamiento**. **Comprobar los servidores de hubs** les pregunta. Cómo funciona: [docs/hub-link.md](docs/hub-link.md).
 
 **Juego cruzado con Azahar y Citra:** las salas son las mismas que las salas multijugador de Azahar, Citra y Lime3DS, así
 que sus jugadores entran a una sala de esta app y tú a las suyas, de la misma manera (con la dirección, o desde **Salas
@@ -602,6 +611,20 @@ adb install -r -i com.mh4u.native MH4U-<version>.apk
 ```
 
 Usa el nombre del APK que descargaste. Es opcional: el juego anda igual sin esto.
+
+### Otros nombres de paquete
+
+El modo de rendimiento de algunos teléfonos conoce una app por el nombre de su paquete. Cada versión trae la misma app con tres
+más: `MH4U-<versión>-antutu.apk` (`com.antutu.ABenchMark`), `MH4U-<versión>-ludashi.apk` (`com.ludashi.benchmark`) y
+`MH4U-<versión>-alt.apk` (`com.mh4u.native.alt`, una segunda instalación junto a la normal). Solo cambian el nombre del paquete
+y el de la app. Cada paquete guarda su propia carpeta en `Android/data` (sus partidas y ajustes también), así que no los
+comparten, y los de antutu y ludashi no se pueden instalar sobre las apps reales de esos benchmarks. Usa el nombre del que
+instales en la línea `adb install -i` de arriba.
+
+### Dónde viven tus archivos
+
+Engranaje, **Sistema**, **Tu juego**, **Carpeta del usuario** saca los ajustes, partidas, mods y registro de `Android/data` a la
+carpeta que elijas (copiando lo que hay, o empezando vacía). El cambio se aplica la próxima vez que arranque la app.
 
 ## Si algo sale mal
 

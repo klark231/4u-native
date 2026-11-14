@@ -1430,7 +1430,9 @@ void restart_app() {
 // ---------------------------------------------------------------- the Multiplayer tab
 const ImU32 NET_GREEN = IM_COL32(132, 206, 98, 255);
 const char* say(const char* en, const char* es) { return spanish() ? es : en; }
-bool in_room(const rooms::Status& st) { return st.state == rooms::State::Joined || st.state == rooms::State::Moderator; }
+bool in_room(const rooms::Status& st) {  // (a room: the hub servers show as Joined too, without room_session)
+    return st.room_session && (st.state == rooms::State::Joined || st.state == rooms::State::Moderator);
+}
 
 // Why the room refused, dropped or kicked this phone, as the player reads it, and what to try
 std::string error_text(rooms::Error e) {
@@ -1475,17 +1477,22 @@ ImU32 line_ink(const NetLine& l) {
 std::string status_text(const rooms::Status& st) {
     switch (st.state) {
     case rooms::State::Joining: return tr(st.waiting_for_console ? "Waiting for the game..." : "Connecting...");
-    case rooms::State::Joined: return tr(st.hosting ? "Hosting, in the room" : "In the room");
+    case rooms::State::Joined:
+        if (!st.room_session) return say("On the hub servers", "En los servidores de hubs");
+        return tr(st.hosting ? "Hosting, in the room" : "In the room");
     case rooms::State::Moderator: return tr(st.hosting ? "Hosting, in the room" : "In the room, moderator");
-    default: return st.hosting ? fmt("Room open on UDP %d", (int)st.hosted_port) : tr("Not in a room");
+    default: return st.hosting ? fmt("Room open on UDP %d", (int)st.hosted_port) : net_uses_rooms() ? tr("Not in a room") : say("Not connected", "Sin conexión");
     }
 }
 ImU32 status_ink(const rooms::Status& st) {
-    if (in_room(st)) return NET_GREEN;
+    if (in_room(st) || st.state == rooms::State::Joined) return NET_GREEN;  // (a room, or the hub servers)
     if (st.state == rooms::State::Joining) return touch_look().glow;
     return st.error != rooms::Error::None ? theme().warn : touch_look().dim;
 }
 std::string status_help(const rooms::Status& st) {
+    if (st.state == rooms::State::Joined && !st.room_session)
+        return say("The hub servers are in use. In the game's Local Play, one hunter creates a Gathering Hall and the others find it.",
+                   "Los servidores de hubs están en uso. En el juego local (Local Play), un cazador crea un Gathering Hall y los demás lo buscan.");
     if (in_room(st)) {
         std::string at = st.host + ":" + std::to_string(st.port);
         if (st.hosting) {  // (this phone's room: where the others find it, not the loopback)
@@ -1770,10 +1777,10 @@ bool other_game(const rooms::Member& m) {
 }
 void crossplay_note(std::vector<Row>& r, const rooms::Status& st) {
     note(r, "net.cross",
-         say("Crossplay: these rooms are the same as Azahar's and Citra's (and Lime3DS's) multiplayer rooms. Their players "
+         say("Citra Room: these rooms are the same as Azahar's and Citra's (and Lime3DS's) multiplayer rooms. Their players "
              "join a room of this app, and you join theirs, the same way. Everyone needs MH4U with the 1.3.0 update; "
              "another version doesn't find your Gathering Hall.",
-             "Juego cruzado: estas salas son las mismas que las salas multijugador de Azahar y Citra (y Lime3DS). Sus "
+             "Sala de Citra: estas salas son las mismas que las salas multijugador de Azahar y Citra (y Lime3DS). Sus "
              "jugadores entran a una sala de esta app, y tú a las suyas, de la misma manera. Todos necesitan MH4U con la "
              "actualización 1.3.0; otra versión no encuentra tu Gathering Hall."),
          touch_look().glow);
@@ -1788,8 +1795,252 @@ void crossplay_note(std::vector<Row>& r, const rooms::Status& st) {
                  who.c_str()),
              theme().warn);
 }
-// (S36: Multiplayer > Play with emulators, MENU.md: the note, the hunters of another game named)
-MENU_ENTRY("multiplayer/crossplay", 10, [](std::vector<Row>& r) { crossplay_note(r, rooms::GetStatus()); });
+// What this phone plays online with (net_rooms.h, Play online with): the hubs' rows and the rooms' show by it
+bool uses_rooms() { return net_uses_rooms(); }
+bool uses_hubs() { return net_uses_hubs(); }
+// ---------------------------------------------------------------- the Multiplayer section, laid out as MHGU's Network tab (gu-native)
+// Headers and submenus, as there: "Local play and hubs" (Internet hubs: Hub servers, Matchmaking key, Check hub server),
+// "Play online with" (the choice: this app's hubs, Citra Room or Mixed; the nickname; Citra Room, with its browser, its
+// address and password, and the lobby under Advanced), then the rooms and the chat. What the hubs' pages set is written to
+// mh4u-app.ini as it is chosen or typed (not part of the draft: nothing to Save) and applies at once.
+std::string hub_servers_summary() {
+    const std::vector<std::string> list = net_hub_server_list();
+    if (list.empty()) return tr("Off");
+    if (list.size() == 1) return list[0];
+    return fmt(say("%d servers", "%d servidores"), (int)list.size());
+}
+// What Internet hubs shows as its value: the servers, then the key (Public: none), as MHGU's
+std::string hubs_summary() {
+    const std::string key = app_setting("Network", "HubKey", "");
+    return hub_servers_summary() + " \xC2\xB7 " + (key.empty() ? std::string(tr("Public")) : key);
+}
+std::string citra_summary() {
+    const rooms::Status st = rooms::GetStatus();
+    if (in_room(st)) return st.room.name.empty() ? tr("In the room") : st.room.name + " \xC2\xB7 " + tr("In the room");
+    if (st.state == rooms::State::Joining) return tr("Joining...");
+    return s.draft.address.empty() ? std::string(tr("None")) : s.draft.address;
+}
+// One typed server name: not empty, no blanks inside, a name or an IP with :port if it is not 39510, and not "off"
+bool hub_server_name(const std::string& typed, std::string& name, std::string& error) {
+    const size_t from = typed.find_first_not_of(" \t"), to = typed.find_last_not_of(" \t");
+    name = from == std::string::npos ? "" : typed.substr(from, to - from + 1);
+    mh4n::hub::Endpoint e;
+    if (name.empty() || name.find_first_of(" ,;\t") != std::string::npos || !strcasecmp(name.c_str(), "off") ||
+        !mh4n::hub::ParseEndpoint(name, &e)) {
+        error = say("Type one server name, such as host or host:port.", "Escribe el nombre de un solo servidor, como host o host:puerto.");
+        return false;
+    }
+    return true;
+}
+// Saves the list and uses it now (an empty one is none: the hubs end)
+bool hub_servers_set(const std::vector<std::string>& list, std::string& error) {
+    if (list.size() > mh4n::hub::kMaxServers) {
+        error = say("At most 8 hub servers.", "Como máximo 8 servidores de hubs.");
+        return false;
+    }
+    net_hub_server_list_set(list);
+    app_settings_save();
+    net_hub_apply();
+    return true;
+}
+void reset_hub_servers() {
+    net_hub_server_list_set({mh4n::hub::kDefaultServers});
+    app_settings_save();
+    net_hub_apply();
+}
+// Multiplayer > Internet hubs > Hub servers: each server on a row of its own with a Remove row under it, then Add a server
+// (MHGU's page), and paste, copy and restore
+void rows_hub_servers(std::vector<Row>& r) {
+    const std::vector<std::string> list = net_hub_server_list();
+    note(r, "hs.what",
+         say("A hub server lists the hubs that hunters create in the game's Local Play. Everyone who plays together uses the same servers and the same key. Players of every region (USA, EUR, JPN, KOR) see each other's hubs.",
+             "Un servidor de hubs lista los hubs que los cazadores crean en el juego local (Local Play). Quienes juegan juntos usan los mismos servidores y la misma clave. Los jugadores de todas las regiones (USA, EUR, JPN, KOR) ven los hubs de los demás."),
+         touch_look().dim);
+    if (list.empty()) header(r, "hs.none", say("No hub server: no hubs over the internet", "Sin servidor de hubs: no hay hubs por internet"));
+    for (size_t i = 0; i < list.size(); i++) {
+        const std::string id = std::to_string(i), start = list[i];
+        const std::string title = fmt(say("Server %d", "Servidor %d"), (int)i + 1);
+        Row row;
+        row.id = "hs." + id;
+        row.title = title;
+        row.value = start;
+        row.arrow = true;
+        row.help = say("Select to change this server's address: a name or an IP, and :port if it is not 39510.",
+                       "Selecciona para cambiar la dirección de este servidor: un nombre o una IP, y :puerto si no es 39510.");
+        row.activate = [i, start, title]() {
+            open_keyboard(title, start, KB_ANY, 120,
+                          say("A hub server's name or address, such as http://name or name:port.",
+                              "El nombre o la dirección de un servidor de hubs, como http://nombre o nombre:puerto."),
+                          [i](const std::string& typed, std::string& error) {
+                              std::vector<std::string> l = net_hub_server_list();
+                              std::string name;
+                              if (i >= l.size() || !hub_server_name(typed, name, error)) return false;
+                              l[i] = name;
+                              return hub_servers_set(l, error);
+                          });
+        };
+        r.push_back(std::move(row));
+        action(r, "hsd." + id, fmt(say("Remove server %d", "Quitar el servidor %d"), (int)i + 1), [i]() {
+            std::vector<std::string> l = net_hub_server_list();
+            std::string error;
+            if (i < l.size()) l.erase(l.begin() + (long)i);
+            hub_servers_set(l, error);
+        });
+        r.back().arrow = false;
+        r.back().help = say("Takes this server out of the list. Hubs listed only there are no longer searched.",
+                            "Quita este servidor de la lista. Los hubs que solo se listan ahí ya no se buscan.");
+    }
+    action(r, "hs.add", say("Add a server", "Agregar un servidor"), []() {
+        open_keyboard(say("New hub server", "Nuevo servidor de hubs"), "", KB_ANY, 120,
+                      say("A hub server's name or address, such as http://name or name:port.",
+                          "El nombre o la dirección de un servidor de hubs, como http://nombre o nombre:puerto."),
+                      [](const std::string& typed, std::string& error) {
+                          std::vector<std::string> l = net_hub_server_list();
+                          std::string name;
+                          if (!hub_server_name(typed, name, error)) return false;
+                          if (std::find(l.begin(), l.end(), name) == l.end()) l.push_back(name);
+                          return hub_servers_set(l, error);
+                      });
+    }, list.size() < mh4n::hub::kMaxServers);
+    r.back().help = say("Another hub server: hubs are listed on all of them and a search asks all of them.",
+                        "Otro servidor de hubs: los hubs se listan en todos y la búsqueda les pregunta a todos.");
+    action(r, "hs.paste", say("Paste servers", "Pegar servidores"), []() {
+        char* clip = SDL_GetClipboardText();
+        const std::string text = clip ? clip : "";
+        SDL_free(clip);
+        std::vector<std::string> l = net_hub_server_list();
+        std::string error, cur;
+        int added = 0;
+        for (const char ch : text + " ") {  // (one or several, spaces or commas between, as a friend sends them)
+            if (ch != ' ' && ch != ',' && ch != ';' && ch != '\t' && ch != '\n' && ch != '\r') {
+                cur += ch;
+                continue;
+            }
+            if (cur.empty()) continue;
+            std::string name;
+            if (!hub_server_name(cur, name, error)) break;
+            cur.clear();
+            if (l.size() >= mh4n::hub::kMaxServers) {
+                error = say("At most 8 hub servers.", "Como máximo 8 servidores de hubs.");
+                break;
+            }
+            if (std::find(l.begin(), l.end(), name) == l.end()) l.push_back(name), added++;
+        }
+        if (text.find_first_not_of(" \t\r\n,;") == std::string::npos) error = say("The clipboard is empty.", "El portapapeles está vacío.");
+        std::string why;
+        if (added && !hub_servers_set(l, why)) error = why;
+        s.error = error;
+    });
+    r.back().help = say("Adds the servers in the clipboard: one, or several separated by spaces or commas, as a friend sends them.",
+                        "Agrega los servidores del portapapeles: uno, o varios separados por espacios o comas, como los manda un amigo.");
+    action(r, "hs.copy", say("Copy servers", "Copiar servidores"), []() { SDL_SetClipboardText(net_hub_servers_text().c_str()); },
+           !list.empty());
+    r.back().help = say("Puts the list in the clipboard, to send it to a friend: Paste servers adds them on their phone.",
+                        "Pone la lista en el portapapeles, para mandársela a un amigo: Pegar servidores los agrega en su teléfono.");
+    action(r, "hs.reset", say("Restore the default servers", "Restaurar los servidores predeterminados"), []() { reset_hub_servers(); });
+    r.back().help = say("The list goes back to http://meoli.viewdns.net.", "La lista vuelve a http://meoli.viewdns.net.");
+}
+// Multiplayer > Internet hubs: the matchmaking key
+void rows_hub_key(std::vector<Row>& r) {
+    const std::string key = app_setting("Network", "HubKey", "");
+    const char* const help_en = "On the hub server, only players with the same key see each other's hubs: agree on one with your friends. Empty: public hubs.";
+    const char* const help_es = "En el servidor de hubs, solo los jugadores con la misma clave ven los hubs de los demás: pónganse de acuerdo con sus amigos. Vacía: hubs públicos.";
+    Row krow;
+    krow.id = "net.hub.key", krow.title = say("Matchmaking key", "Clave de emparejamiento");
+    krow.value = key.empty() ? std::string(tr("Public")) : key;
+    krow.arrow = true;
+    krow.help = say(help_en, help_es);
+    krow.activate = [key, help_en, help_es]() {
+        open_keyboard(say("Matchmaking key", "Clave de emparejamiento"), key, KB_ANY, 64, say(help_en, help_es),
+                      [](const std::string& typed, std::string&) {
+                          app_setting_set("Network", "HubKey", typed);
+                          app_settings_save();
+                          net_hub_apply();
+                          return true;
+                      });
+    };
+    r.push_back(std::move(krow));
+}
+void reset_hub_key() {
+    app_setting_set("Network", "HubKey", "");
+    app_settings_save();
+    net_hub_apply();
+}
+// Multiplayer > Internet hubs: Check hub server, with each server's answer under it and what the hubs are doing
+void rows_hub_check(std::vector<Row>& r) {
+    const rooms::HubStatus hs = rooms::GetHubStatus();
+    const NetHubCheck check = net_hub_checked();
+    action(r, "net.hub.check", say("Check hub server", "Comprobar el servidor de hubs"), []() { net_hub_check(); }, !check.busy);
+    r.back().help = say("Asks the hub servers whether they answer, with the matchmaking key above: how long each takes, and how many hubs it lists.",
+                        "Le pregunta a los servidores de hubs si responden, con la clave de arriba: cuánto tarda cada uno y cuántos hubs lista.");
+    if (check.busy) {
+        r.back().value = say("Checking...", "Comprobando...");
+        r.back().ink = touch_look().glow;
+    } else if (check.done && !check.servers.empty()) {
+        int online = 0;
+        for (const mh4n::hub::ServerCheck& c : check.servers) online += c.ok ? 1 : 0;
+        const mh4n::hub::ServerCheck& c0 = check.servers[0];
+        r.back().value = check.servers.size() == 1
+                             ? (c0.ok ? fmt(say("Online, %d ms, %d hub(s)", "En línea, %d ms, %d hub(s)"), c0.ms, c0.hubs) : c0.detail)
+                             : fmt(say("%d of %d online", "%d de %d en línea"), online, (int)check.servers.size());
+        r.back().ink = online == (int)check.servers.size() ? NET_GREEN : theme().warn;
+    } else {
+        r.back().value = say("Not checked", "Sin comprobar");
+    }
+    if (check.done) {
+        for (size_t i = 0; i < check.servers.size(); i++) {
+            const mh4n::hub::ServerCheck& c = check.servers[i];
+            note(r, "net.hub.check." + std::to_string(i),
+                 c.ok ? fmt(say("%s answered in %d ms: %d hub(s) for this game.", "%s respondió en %d ms: %d hub(s) de este juego."), c.server.Text().c_str(), c.ms, c.hubs)
+                      : fmt(say("%s: %s.", "%s: %s."), c.server.Text().c_str(), c.detail.c_str()),
+                 c.ok ? NET_GREEN : theme().warn);
+        }
+    }
+    if (hs.active) {  // (what the hubs are doing now)
+        if (!hs.problem.empty()) note(r, "net.hub.why", hs.problem, theme().warn);
+        if (hs.hosting)
+            note(r, "net.hub.hosting", fmt(say("Your hub is listed. Players on it: %d.", "Tu hub está en la lista. Jugadores en él: %d."), hs.players), NET_GREEN);
+        else if (hs.linked)
+            note(r, "net.hub.linked", say("You are playing on another hunter's hub.", "Estás jugando en el hub de otro cazador."), NET_GREEN);
+        if (hs.hubs.empty() && !hs.hosting && !hs.linked)
+            note(r, "net.hub.none", say("No hub found yet. In the game, create a Gathering Hall on one phone and search on the other.",
+                                         "Aún no hay hubs. En el juego, crea un Gathering Hall en un teléfono y busca en el otro."),
+                 touch_look().dim);
+        for (size_t i = 0; i < hs.hubs.size(); i++) {
+            const rooms::HubListed& h = hs.hubs[i];
+            Row row3;
+            row3.id = "net.hub.found." + std::to_string(i), row3.title = fmt(say("Hub %d", "Hub %d"), (int)i + 1);
+            row3.value = fmt("%d / %d", (int)h.nodes, (int)h.max_nodes);
+            row3.help = say("Found on ", "Encontrado en ") + h.server + say(". Join it from the game's Local Play.", ". Entra desde el juego local (Local Play).");
+            r.push_back(std::move(row3));
+        }
+    }
+}
+// Multiplayer: Play online with (MHGU's Crossplay row, as it is for the 3DS game): this app's hubs, Citra Room, or Mixed
+void rows_play_with(std::vector<Row>& r) {
+    add_choice(r, "net.playwith", "Play online with", net_play_with(),
+               {say("This app's hubs", "Los hubs de esta app"), say("Citra Room", "Sala de Citra"), say("Mixed", "Mixto")},
+               [](int v) { net_set_play_with(v); });
+    r.back().help = say("This app's hubs: the hub servers only (the default). Citra Room: an Azahar / Citra room only, to play with the 3DS game's players: join one of theirs or host yours. Mixed: both at once. In Mixed you are in the room and on the hub servers together, and a hub you host in the game is in the room too, so Azahar and Citra players and the hub servers' players all meet in your game. Applies at once.",
+                        "Los hubs de esta app: solo los servidores de hubs (lo predeterminado). Sala de Citra: solo una sala de Azahar / Citra, para jugar con los del juego de 3DS: entra a una de ellos o crea la tuya. Mixto: las dos a la vez. En Mixto estás en la sala y en los servidores de hubs juntos, y un hub que creas en el juego está también en la sala, así que los jugadores de Azahar y Citra y los de los servidores de hubs se encuentran todos en tu juego. Se aplica al momento.");
+}
+void reset_play_with() { net_set_play_with(PLAY_HUBS); }
+MENU_ENTRY("multiplayer", 11, [](std::vector<Row>& r) { header(r, "net.hub.head", say("Local play and hubs", "Juego local y hubs")); }, {}, uses_hubs);
+MENU_PAGE("multiplayer/hubs", "Internet hubs", "multiplayer", 12, uses_hubs, [](Row& r) {
+    r.value = hubs_summary();
+    r.help = say("Hubs over the internet through a hub server: the servers, the matchmaking key, and a check that they answer.",
+                 "Hubs por internet a través de un servidor de hubs: los servidores, la clave de emparejamiento y una comprobación de que responden.");
+});
+MENU_PAGE("multiplayer/hubs/servers", "Hub servers", "multiplayer/hubs", 10, {}, [](Row& r) {
+    r.value = hub_servers_summary();
+    r.help = say("The servers that list internet hubs. Select to change, remove or add servers.",
+                 "Los servidores que listan los hubs por internet. Selecciona para cambiar, quitar o agregar servidores.");
+});
+MENU_ENTRY("multiplayer/hubs/servers", 10, rows_hub_servers, reset_hub_servers);
+MENU_ENTRY("multiplayer/hubs", 20, rows_hub_key, reset_hub_key);
+MENU_ENTRY("multiplayer/hubs", 30, rows_hub_check);
+MENU_ENTRY("multiplayer", 14, [](std::vector<Row>& r) { header(r, "net.cross.head", tr("Play online with")); });
+MENU_ENTRY("multiplayer", 15, rows_play_with, reset_play_with);
 // The Multiplayer section (MENU.md): where this phone is and its nickname on the section's page, with Leave while in a
 // room; joining a room (an address, the rooms on this Wi-Fi, the lobby's public rooms), hosting one, the hunters in it
 // and its chat on pages one level down
@@ -1805,24 +2056,28 @@ void status_rows(std::vector<Row>& r) {  // (where this phone is: its colour at 
 MENU_ENTRY("multiplayer", 10, status_rows);
 void rows_multiplayer_20(std::vector<Row>& r) {
     Draft& c = s.draft;
-    add_text(r, "net.nick", "Nickname", &c.nick, KB_NICK, 20, "Nickname", c.nick.empty() ? tr("Choose one") : c.nick,
+    add_text(r, "net.nick", "Room nickname", &c.nick, KB_NICK, 20, "Nickname", c.nick.empty() ? tr("Choose one") : c.nick,
              tr("4 to 20 letters, digits, spaces, '.', '_' or '-'."), check_nick);
     if (!rooms::ValidNickname(c.nick)) r.back().ink = theme().warn;
 }
 void reset_multiplayer_20() { s.draft.nick = defaults().nick; }
-MENU_ENTRY("multiplayer", 20, rows_multiplayer_20, reset_multiplayer_20);
+MENU_ENTRY("multiplayer", 16, rows_multiplayer_20, reset_multiplayer_20, uses_rooms);  // (the rooms': with rooms)
 void rows_multiplayer_25(std::vector<Row>& r) {
     const rooms::Status st = rooms::GetStatus();
     const bool joining = st.state == rooms::State::Joining;
     if (in_room(st) || joining) action(r, "net.join", tr(joining ? "Stop joining" : "Leave the room"), []() { net_leave(); }, true, "Leave");
 }
-MENU_ENTRY("multiplayer", 25, rows_multiplayer_25);
-MENU_PAGE("multiplayer/join", "Join a room", "multiplayer", 30, {}, [](Row& r) {
-    r.value = s.draft.address;  // (the address it joins)
-    r.help = say("Its address and password, the rooms on this Wi-Fi, and the public rooms of the lobby.",
-                 "Su dirección y contraseña, las salas en esta Wi-Fi y las salas públicas del lobby.");
+MENU_ENTRY("multiplayer", 18, rows_multiplayer_25);
+MENU_ENTRY("multiplayer", 26, [](std::vector<Row>& r) { header(r, "net.rooms.head", say("Rooms and chat", "Salas y chat")); });
+MENU_PAGE("multiplayer/join", "Citra Room", "multiplayer", 17, uses_rooms, [](Row& r) {
+    r.value = citra_summary();
+    r.help = say("Azahar / Citra rooms, where the 3DS game's players are: the room browser, the room's address and password, and the lobby.",
+                 "Salas de Azahar / Citra, donde están los jugadores del juego de 3DS: el buscador de salas, la dirección y la contraseña de la sala, y el lobby.");
 });
-MENU_PAGE("multiplayer/host", "Host a room", "multiplayer", 35, {}, [](Row& r) {
+MENU_PAGE("multiplayer/join/browser", "Citra Room Browser", "multiplayer/join", 7, {}, [](Row& r) {
+    r.help = say("The public rooms of the lobby: a tap joins one.", "Las salas públicas del lobby: un toque entra a una.");
+});
+MENU_PAGE("multiplayer/host", "Host a room", "multiplayer", 35, uses_rooms, [](Row& r) {
     const rooms::Status st = rooms::GetStatus();
     if (st.hosting) r.value = tr("Room open"), r.ink = NET_GREEN;
     r.help = say("A room on this phone, which the others join.", "Una sala en este teléfono, a la que entran los demás.");
@@ -1833,15 +2088,15 @@ MENU_PAGE("multiplayer/room", "Hunters in the room", "multiplayer", 38, in_room_
 });
 MENU_PAGE("multiplayer/chat", "Chat", "multiplayer", 40);  // (1.0: empty, the chat's rows are on the section's page)
 MENU_PAGE("multiplayer/friends", "Friends", "multiplayer", 50);              // (1.0: the chat group's, S32)
-MENU_PAGE("multiplayer/crossplay", "Play with emulators", "multiplayer", 60);  // (1.0: the cross group's, S36)
 MENU_PAGE("multiplayer/guide", "How to play online", "multiplayer", 90);       // (1.0: S34)
 // Multiplayer > Join a room
 MENU_ENTRY("multiplayer/join", 5, status_rows);
+MENU_ENTRY("multiplayer/join", 6, [](std::vector<Row>& r) { crossplay_note(r, rooms::GetStatus()); });
 void rows_multiplayer_join_10(std::vector<Row>& r) {
     Draft& c = s.draft;
     const rooms::Status st = rooms::GetStatus();
     const bool in = in_room(st), joining = st.state == rooms::State::Joining;
-    add_text(r, "net.address", "Room address", &c.address, KB_ADDRESS, 128, "Address", c.address.empty() ? tr("No address") : c.address,
+    add_text(r, "net.address", "Citra Room server", &c.address, KB_ADDRESS, 128, "Address", c.address.empty() ? tr("No address") : c.address,
              tr("Its IP or name, and :port if it is not 24872."), check_address);
     add_text(r, "net.password", "Password", &c.password, KB_SECRET, 64, "Password",
              c.password.empty() ? tr("No password") : "\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2",  // (U+2022)
@@ -1859,10 +2114,14 @@ void reset_multiplayer_join_10() {
 }
 MENU_ENTRY("multiplayer/join", 10, rows_multiplayer_join_10, reset_multiplayer_join_10);
 MENU_ENTRY("multiplayer/join", 20, lan_rows);
+// Citra Room > Advanced: the lobby that lists the public rooms (MHGU's Citra Web API URL)
 void rows_multiplayer_join_30(std::vector<Row>& r) {
-    Draft& c = s.draft;
-    header(r, "net.lobby.head", tr("Public rooms"));
+    header(r, "net.lobby.head", tr("Advanced"));
     lobby_row(r);
+}
+// Citra Room > Citra Room Browser: the lobby's public rooms
+void rows_multiplayer_browser_10(std::vector<Row>& r) {
+    Draft& c = s.draft;
     const std::string url = lobby_url(c.lobby);
     const NetLobby lobby = net_lobby();
     const bool answered = lobby.done && lobby.url == url;
@@ -1920,6 +2179,7 @@ void rows_multiplayer_join_30(std::vector<Row>& r) {
 }
 void reset_multiplayer_join_30() { s.draft.lobby = defaults().lobby; }
 MENU_ENTRY("multiplayer/join", 30, rows_multiplayer_join_30, reset_multiplayer_join_30);
+MENU_ENTRY("multiplayer/join/browser", 10, rows_multiplayer_browser_10);
 // Multiplayer > Host a room
 MENU_ENTRY("multiplayer/host", 5, status_rows);
 void rows_multiplayer_host_10(std::vector<Row>& r) {
@@ -3195,6 +3455,7 @@ void verify_rows(std::vector<Row>& r) {
 // System > Your game (the MHGU port's same rows)
 void rows_system_game_10(std::vector<Row>& r) {
     action(r, "game.folder", tr("Game folder"), []() { app_call_activity("showGameFolder"); }, true, "folder");
+    action(r, "user.folder", tr("User folder"), []() { app_call_activity("showUserFolder"); }, true, "folder");
     action(r, "game.verify", tr("Verify game files"), []() { verify_open(); }, true, "verify");
     r.back().value = verify_value(verify_files_state());
     action(r, "save.folder", tr("Save folder"), []() { app_call_activity("showSaveFolder"); }, true, "savefolder");

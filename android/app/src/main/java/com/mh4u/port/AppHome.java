@@ -42,8 +42,14 @@ final class AppHome {
 
     private AppHome() {}
 
-    /** The folder: the private one once ensure() moved there, else the external one (the private one with no external storage). */
+    /** The folder: the one the player chose (UserFolder, Settings -> User folder), else baseHome(). */
     static File home(Context c) {
+        File mine = UserFolder.chosenUsable(c);
+        return mine != null ? mine : baseHome(c);
+    }
+
+    /** The app's own folder: the private one once ensure() moved there, else the external one (the private one with no external storage). */
+    static File baseHome(Context c) {
         File moved = chosen(c);
         if (moved != null) return moved;
         File f = c.getExternalFilesDir(null);
@@ -62,6 +68,7 @@ final class AppHome {
 
     /** At the start, before anything is written (GameFolderActivity, and GameActivity for a test run started with adb). */
     static synchronized void ensure(Context c) {
+        if (UserFolder.chosenUsable(c) != null) return;  // (the player's own folder: theirs, nothing to repair or move)
         if (chosen(c) != null) return;
         File ext = c.getExternalFilesDir(null);
         if (ext == null) return;  // (no external storage at this moment: the private folder for this run, nothing decided)

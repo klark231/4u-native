@@ -50,6 +50,30 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+    // Four builds of the same app: the usual one and three with another package name (some phones' performance modes know a
+    // benchmark by its package). The code stays in com.mh4u.port (the namespace); only the package name and the label change.
+    // Each package has its own folder in Android/data (its saves too) and cannot be installed over the real benchmark.
+    flavorDimensions "pkg"
+    productFlavors {
+        standard {
+            dimension "pkg"
+        }
+        antutu {
+            dimension "pkg"
+            applicationId "com.antutu.ABenchMark"
+            versionNameSuffix "-antutu"
+        }
+        ludashi {
+            dimension "pkg"
+            applicationId "com.ludashi.benchmark"
+            versionNameSuffix "-ludashi"
+        }
+        alt {  // (a second install of the app beside the standard one: its own package, settings, log and saves)
+            dimension "pkg"
+            applicationId "com.mh4u.native.alt"
+            versionNameSuffix "-alt"
+        }
+    }
     lint {
         abortOnError = false
         checkReleaseBuilds = false

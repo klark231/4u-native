@@ -26,7 +26,9 @@ namespace rooms = mh4n::rooms;
 
 namespace {
 bool g_started;
-bool in_room(const rooms::Status& st) { return st.state == rooms::State::Joined || st.state == rooms::State::Moderator; }
+bool in_room(const rooms::Status& st) {  // (a room: not only the hub servers, which also show as Joined)
+    return st.room_session && (st.state == rooms::State::Joined || st.state == rooms::State::Moderator);
+}
 void chat_log(const char* s) { std::fprintf(stderr, "%s\n", s); }
 }  // namespace
 

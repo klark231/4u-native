@@ -473,8 +473,17 @@ comforts off. Their *Send All Rewards To Item Box (Hold X+Y)* isn't needed: the 
 
 ## Playing together
 
-The game's local play goes through a network room, the same kind of rooms Azahar uses: players of this app and of Azahar can
-share one.
+The game's local play goes through **hub servers** (the default) or through a network room, the same kind of rooms Azahar
+uses: players of this app and of Azahar can share one. Gear, **Multiplayer**, **Play online with**
+chooses: **This app's hubs**, **Citra Room** (Azahar / Citra rooms), or **Mixed**, both at once. In **Mixed** you can be on the hub servers
+and in an Azahar or Citra room together, and if you host in the game, the Azahar and Citra players in the room play with the
+hub servers' players too (all of them reach your game).
+
+**Hub servers:** gear, **Multiplayer**, **Internet hubs**, **Hub servers**: one row per server (up to 8) with **Remove server**,
+**Add a server**, and paste, copy and restore. The default is `http://meoli.viewdns.net`; remove them all for none. A name or
+address, with or without `http://`, and `:port` if it is not 39510. They are always on, nothing to press: the game's Local Play
+finds the hubs they list, from every region (USA, EUR, JPN, KOR). Everyone who plays together uses the same servers and the
+same **Matchmaking key**. **Check hub server** asks them. How it works: [docs/hub-link.md](docs/hub-link.md).
 
 **Crossplay with Azahar and Citra:** the rooms are the same as the multiplayer rooms of Azahar, Citra and Lime3DS, so their
 players join a room of this app and you join theirs, the same way (by address, or from **Public rooms**: that lobby is where
@@ -563,6 +572,20 @@ adb install -r -i com.mh4u.native MH4U-<version>.apk
 ```
 
 Use the name of the APK you downloaded. It's optional: the game runs the same without it.
+
+### Other package names
+
+Some phones' performance modes know an app by its package name. Every release has the same app under three more:
+`MH4U-<version>-antutu.apk` (`com.antutu.ABenchMark`), `MH4U-<version>-ludashi.apk` (`com.ludashi.benchmark`) and
+`MH4U-<version>-alt.apk` (`com.mh4u.native.alt`, a second install beside the usual one). Only the package name and the app's
+name change. Each package keeps its own folder in `Android/data` (its saves and settings too), so they don't share them, and
+the antutu and ludashi ones can't be installed over the real benchmark apps. Use the name of the one you install in the
+`adb install -i` line above.
+
+### Where your files live
+
+Gear, **System**, **Your game**, **User folder** moves the settings, saves, mods and log out of `Android/data` into a folder of
+your choice (copying what is there, or starting empty). The change applies the next time the app starts.
 
 ## If something goes wrong
 
