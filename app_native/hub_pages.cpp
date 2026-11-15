@@ -57,13 +57,13 @@ void hub_pages_frame() {
                 gold = IM_COL32(226, 182, 92, 255), ink = IM_COL32(240, 228, 200, 255), lit = IM_COL32(226, 182, 92, 255),
                 lit_ink = IM_COL32(40, 14, 14, 255);
     dl->AddRectFilled(ImVec2(g.x, g.y), ImVec2(g.x + g.w, g.y + g.h), panel, r * 1.3f);
-    dl->AddRect(ImVec2(g.x, g.y), ImVec2(g.x + g.w, g.y + g.h), edge, r * 1.3f, 0, line);
+    dl->AddRect(ImVec2(g.x, g.y), ImVec2(g.x + g.w, g.y + g.h), edge, r * 1.3f, line);
     const int cnt = numbers(p) + 2, first = first_number(p);
     for (int i = 0; i < cnt; i++) {
         const ImVec2 a(g.x + g.pad + i * (g.side + g.gap), g.y + g.pad), b(a.x + g.side, a.y + g.side);
         const bool arrow = i == 0 || i == cnt - 1, chosen = !arrow && first + i - 1 == p.chosen;
         dl->AddRectFilled(a, b, chosen ? lit : button, r);
-        dl->AddRect(a, b, edge, r, 0, line);
+        dl->AddRect(a, b, edge, r, line);
         const ImVec2 m((a.x + b.x) * .5f, (a.y + b.y) * .5f);
         const ImU32 c = chosen ? lit_ink : arrow ? gold : ink;
         if (arrow) {
@@ -86,7 +86,7 @@ void hub_pages_frame() {
     const float cw = ts.x + ch, cx = g.x + g.w * .5f, cy = g.y - 4 * d - ch * .5f;
     const ImVec2 c0(cx - cw * .5f, cy - ch * .5f), c1(cx + cw * .5f, cy + ch * .5f);
     dl->AddRectFilled(c0, c1, panel, ch * .5f);
-    dl->AddRect(c0, c1, fade(edge, .9f), ch * .5f, 0, line);
+    dl->AddRect(c0, c1, fade(edge, .9f), ch * .5f, line);
     dl->AddText(font, fs, ImVec2(cx - ts.x * .5f, cy - ts.y * .5f), ink, t);
 }
 

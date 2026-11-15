@@ -114,7 +114,7 @@ void overlay_draw(float w, float h) {
                     gold = IM_COL32(226, 182, 92, 255), ink = IM_COL32(50, 25, 24, 255);
         dl->AddRectFilled(ImVec2(lo.x, lo.y + 2 * d), ImVec2(hi.x, hi.y + 2 * d), faded(IM_COL32(0, 0, 0, 255), .25f * op), round);
         dl->AddRectFilled(lo, hi, faded(g_drag && g_dragged ? pressed : wine, op), round);
-        dl->AddRect(lo, hi, faded(edge, op), round, 0, std::max(1.5f, 2 * d));
+        dl->AddRect(lo, hi, faded(edge, op), round, std::max(1.5f, 2 * d));
         const float bw = sd * .46f, bh = sd * .34f;
         const ImVec2 a(bx - bw * .5f, by - bh * .62f), b(bx + bw * .5f, by + bh * .38f);
         dl->AddRectFilled(a, b, faded(gold, op), bh * .22f);
