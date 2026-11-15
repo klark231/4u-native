@@ -79,7 +79,8 @@ final class ChatSheet {
                 d.requestWindowFeature(Window.FEATURE_NO_TITLE);
                 int alpha = Math.max(51, Math.min(255, Math.round(Math.max(20, Math.min(100, opacity)) * 2.55f)));
                 GradientDrawable back = new GradientDrawable();
-                back.setColor(Color.argb(alpha, 0xF3, 0xF0, 0xFA));
+                back.setColor(Color.argb(alpha, 44, 22, 20));  // (the menu's wine, as see-through as Chat dialog opacity says)
+                back.setStroke(dp(activity, 1), Look.EDGE);
                 float r = dp(activity, 20);
                 back.setCornerRadii(new float[] {r, r, r, r, 0, 0, 0, 0});
 
@@ -95,11 +96,12 @@ final class ChatSheet {
                 top.setGravity(Gravity.CENTER_VERTICAL);
                 channelButton = new TextView(activity);
                 channelButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-                channelButton.setTextColor(Color.rgb(0x3F, 0x4A, 0xB8));
+                channelButton.setTextColor(Look.GOLD);
                 channelButton.setTypeface(Typeface.DEFAULT_BOLD);
                 channelButton.setPadding(dp(activity, 10), dp(activity, 6), dp(activity, 10), dp(activity, 6));
                 GradientDrawable chip = new GradientDrawable();
-                chip.setColor(Color.argb(40, 0x3F, 0x4A, 0xB8));
+                chip.setColor(Look.PANEL);
+                chip.setStroke(dp(activity, 1), Look.EDGE);
                 chip.setCornerRadius(dp(activity, 14));
                 channelButton.setBackground(chip);
                 channelButton.setOnClickListener(new View.OnClickListener() {
@@ -113,12 +115,13 @@ final class ChatSheet {
                 TextView heading = new TextView(activity);
                 heading.setText(title);
                 heading.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
-                heading.setTextColor(Color.rgb(0x1C, 0x1B, 0x20));
+                heading.setTextColor(Look.GOLD);
+                heading.setTypeface(Typeface.SERIF, Typeface.BOLD);
                 heading.setGravity(Gravity.CENTER);
                 TextView shut = new TextView(activity);
                 shut.setText("\u2715");
                 shut.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
-                shut.setTextColor(Color.rgb(0x49, 0x45, 0x4F));
+                shut.setTextColor(Look.CREAM);
                 shut.setPadding(dp(activity, 10), dp(activity, 4), dp(activity, 6), dp(activity, 4));
                 shut.setOnClickListener(new View.OnClickListener() {
                     @Override
@@ -130,6 +133,11 @@ final class ChatSheet {
                 top.addView(heading, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
                 top.addView(shut, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
                 root.addView(top, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                View rule = new View(activity);  // (the menu's red rule under its title)
+                rule.setBackgroundColor(Color.rgb(176, 34, 30));
+                LinearLayout.LayoutParams ruleSize = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 2));
+                ruleSize.setMargins(0, dp(activity, 6), 0, dp(activity, 4));
+                root.addView(rule, ruleSize);
 
                 // the lines
                 scroller = new ScrollView(activity);
@@ -140,7 +148,7 @@ final class ChatSheet {
 
                 problem = new TextView(activity);
                 problem.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-                problem.setTextColor(Color.rgb(0xB0, 0x20, 0x20));
+                problem.setTextColor(Look.ALERT);
                 problem.setVisibility(View.GONE);
                 root.addView(problem, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -153,11 +161,11 @@ final class ChatSheet {
                 field.setSingleLine(true);
                 field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
                 field.setImeOptions(EditorInfo.IME_ACTION_SEND | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
-                field.setTextColor(Color.rgb(0x1C, 0x1B, 0x20));
-                field.setHintTextColor(Color.rgb(0x79, 0x74, 0x7E));
+                field.setTextColor(Look.CREAM);
+                field.setHintTextColor(Color.rgb(150, 128, 104));
                 GradientDrawable outline = new GradientDrawable();
-                outline.setColor(Color.argb(0, 0, 0, 0));
-                outline.setStroke(dp(activity, 1), Color.rgb(0x79, 0x74, 0x7E));
+                outline.setColor(Color.argb(200, 26, 12, 9));
+                outline.setStroke(dp(activity, 1), Look.EDGE);
                 outline.setCornerRadius(dp(activity, 6));
                 field.setBackground(outline);
                 field.setPadding(dp(activity, 12), dp(activity, 12), dp(activity, 12), dp(activity, 12));
@@ -187,7 +195,7 @@ final class ChatSheet {
                 sendButton.setImageResource(android.R.drawable.ic_menu_send);
                 sendButton.setContentDescription(send);
                 sendButton.setBackgroundColor(Color.TRANSPARENT);
-                sendButton.setColorFilter(Color.rgb(0x49, 0x45, 0x4F));
+                sendButton.setColorFilter(Look.GOLD);
                 sendButton.setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
@@ -260,16 +268,17 @@ final class ChatSheet {
             name.setText(who);
             name.setTypeface(Typeface.DEFAULT_BOLD);
             name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-            name.setTextColor(kind.equals("1") ? Color.rgb(0x3F, 0x4A, 0xB8)
-                              : kind.equals("2") ? Color.rgb(0x1B, 0x7F, 0x4B)
-                              : kind.equals("4") ? Color.rgb(0xA8, 0x2C, 0x78)
-                              : kind.equals("5") ? Color.rgb(0xB0, 0x5A, 0x00) : Color.rgb(0x1C, 0x1B, 0x20));
+            // (lighter colours that read on the wine: you gold, the room green, a friend pink, the hub orange)
+            name.setTextColor(kind.equals("1") ? Look.GOLD
+                              : kind.equals("2") ? Color.rgb(150, 206, 116)
+                              : kind.equals("4") ? Color.rgb(236, 150, 196)
+                              : kind.equals("5") ? Color.rgb(240, 166, 84) : Look.CREAM);
             row.addView(name);
         }
         TextView body = new TextView(activity);
         body.setText(text);
         body.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        body.setTextColor(kind.equals("0") ? Color.rgb(0x6B, 0x66, 0x70) : Color.rgb(0x1C, 0x1B, 0x20));
+        body.setTextColor(kind.equals("0") ? Color.rgb(176, 156, 132) : Look.CREAM);
         row.addView(body);
         if (!serial.isEmpty()) {  // (a room shared in the line: a tap joins it)
             row.setOnClickListener(new View.OnClickListener() {
@@ -280,7 +289,8 @@ final class ChatSheet {
                     }
                 }
             });
-            body.setTextColor(Color.rgb(0x3F, 0x4A, 0xB8));
+            body.setTextColor(Look.GOLD);
+            body.setPaintFlags(body.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
         }
         return row;
     }

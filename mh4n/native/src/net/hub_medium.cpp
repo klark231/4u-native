@@ -39,6 +39,24 @@ using namespace std::chrono_literals;
 using rooms::MacAddress;
 using rooms::WifiPacket;
 
+// The pages of the hub list (mh4n/hub.h): the one the buttons chose, and what the ticker gave the game last
+std::mutex g_pages_mu;
+Pages g_pages;
+int g_page_wanted = 0;
+std::atomic<bool> g_in_hub{false};  // hosting, joining or playing on a hub: no list, no buttons
+// A hub stays listed this long after the last search that had it: a server that answers with a few of its hubs picked
+// at random gives the others in the next searches, and the list grows until it holds them all (gu-native's SEEN_KEEP_NS)
+constexpr auto kKeepHubs = 25s;
+
+// Which hubs a page holds, from the page and the hubs found (under g_pages_mu)
+void SetPagesLocked(int chosen, int total) {
+    g_pages.total = total;
+    g_pages.count = std::max(1, (total + kHubsPerPage - 1) / kHubsPerPage);
+    g_pages.chosen = chosen;
+    g_pages.first = total == 0 ? 0 : chosen * kHubsPerPage + 1;
+    g_pages.last = std::min(total, (chosen + 1) * kHubsPerPage);
+}
+
 // ---- sockets (IPv4 TCP, non-blocking, every wait a poll that looks at `stop`) ------------------------------------
 
 namespace sock {
@@ -465,6 +483,9 @@ struct Medium::Core : std::enable_shared_from_this<Medium::Core> {
     std::vector<std::thread> threads;
 
     // ---- plumbing ----
+    Clock::duration KeepFor() const {  // how long a listed hub stays without a search that has it
+        return std::max<Clock::duration>(kKeepHubs, std::chrono::milliseconds(opt.list_every_ms * 3 + opt.connect_timeout_ms));
+    }
     void Touch() {
         ++revision;
         cv.notify_all();
@@ -580,16 +601,23 @@ void Medium::Core::ListerLoop() {
                 const bool ok = ListOne(server, link_protocol, room, opt.connect_timeout_ms, stop, &hubs, &why);
                 std::lock_guard lock(mu);
                 ServerState* st = StateOf(server);
-                entries.erase(std::remove_if(entries.begin(), entries.end(),
-                                             [&](const Entry& e) { return ok && e.server == server; }),
-                              entries.end());
                 if (ok) {
+                    // (the hubs of this answer are updated or added; the ones it left out stay until kKeepHubs passed)
                     const auto now = Clock::now();
                     for (const ListedHub& h : hubs) {
                         if (const auto b = UnpackInfo(h.info, link_protocol)) {
-                            entries.push_back({server, h.id, *b, now});
+                            auto same = std::find_if(entries.begin(), entries.end(),
+                                                     [&](const Entry& e) { return e.server == server && e.id == h.id; });
+                            if (same != entries.end()) {
+                                same->hub = *b, same->seen = now;
+                            } else {
+                                entries.push_back({server, h.id, *b, now});
+                            }
                         }
                     }
+                    entries.erase(std::remove_if(entries.begin(), entries.end(),
+                                                 [&](const Entry& e) { return now - e.seen > KeepFor(); }),
+                                  entries.end());
                     if (st != nullptr && (!st->listed || !st->problem.empty())) {
                         st->listed = true;
                         st->problem.clear();
@@ -626,16 +654,30 @@ void Medium::Core::TickerLoop() {
             }
             if (now >= next_beacons) {
                 next_beacons = now + std::chrono::milliseconds(opt.beacon_every_ms);
+                g_in_hub = hosting || client_link || joining;
                 if (!hosting && !client_link && !joining) {
-                    const auto fresh = std::chrono::milliseconds(opt.list_every_ms * 3 + opt.connect_timeout_ms);
-                    std::vector<MacAddress> seen;
+                    std::vector<const Entry*> fresh;
                     for (const Entry& e : entries) {
-                        if (now - e.seen > fresh || e.hub.mac == opt.mac ||
-                            std::find(seen.begin(), seen.end(), e.hub.mac) != seen.end()) {
+                        if (now - e.seen > KeepFor() || e.hub.mac == opt.mac ||
+                            std::any_of(fresh.begin(), fresh.end(), [&](const Entry* f) { return f->hub.mac == e.hub.mac; })) {
                             continue;
                         }
-                        seen.push_back(e.hub.mac);
-                        deliver_now.push_back(e);
+                        fresh.push_back(&e);
+                    }
+                    // (one order whatever order the servers answered in, so no hub is on two pages or none)
+                    std::sort(fresh.begin(), fresh.end(), [](const Entry* a, const Entry* b) { return a->hub.mac < b->hub.mac; });
+                    const int total = static_cast<int>(fresh.size());
+                    int page;
+                    {
+                        std::lock_guard pages_lock(g_pages_mu);
+                        if (g_page_wanted * kHubsPerPage >= std::max(total, 1)) {
+                            g_page_wanted = 0;  // (fewer hubs than before: back to the first page)
+                        }
+                        page = g_page_wanted;
+                        SetPagesLocked(page, total);
+                    }
+                    for (int i = page * kHubsPerPage; i < total && i < (page + 1) * kHubsPerPage; ++i) {
+                        deliver_now.push_back(*fresh[i]);
                     }
                 }
             }
@@ -1211,6 +1253,32 @@ std::vector<ServerCheck> CheckServers(const std::vector<Endpoint>& servers, Fami
         out.push_back(std::move(c));
     }
     return out;
+}
+
+// ---- pages of the hub list ----------------------------------------------------------------------------------------
+
+Pages GetPages() {
+    std::lock_guard lock(g_pages_mu);
+    return g_pages;
+}
+
+void ChoosePage(int page) {
+    std::lock_guard lock(g_pages_mu);
+    g_page_wanted = page >= 0 && page < g_pages.count ? page : 0;
+    SetPagesLocked(g_page_wanted, g_pages.total);  // (the buttons show it lit at once; the ticker gives it to the game)
+}
+
+void StepPage(int dir) {
+    std::lock_guard lock(g_pages_mu);
+    const int n = std::max(1, g_pages.count);
+    g_page_wanted = ((g_page_wanted + (dir < 0 ? -1 : 1)) % n + n) % n;
+    SetPagesLocked(g_page_wanted, g_pages.total);
+}
+
+bool GameSearching() {
+    const long long last = g_last_game_search.load();
+    const long long now = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count();
+    return last != 0 && now - last < 3'000'000'000LL && !g_in_hub;
 }
 
 }  // namespace mh4n::hub

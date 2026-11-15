@@ -48,6 +48,7 @@
 #include "chat/chat_overlay.h"
 #include "chat/chat_text.h"
 #include "chat_app.h"
+#include "hub_pages.h"
 #include "content.h"
 #include "controls.h"
 #include "first_run.h"
@@ -5865,7 +5866,11 @@ void valve_notice() {
         15);
 }
 void draw_notices() {
-    constexpr double kShown = 6, kFade = .6;
+    // (the room's lines go by the Chat page's look as the chat over the game does: Chat lines, and Fade delay - 0 keeps
+    // them until the menu is opened)
+    constexpr double kFade = .6;
+    const int fade_s = chat::look("fade", 10), most = std::clamp(chat::look("lines", 8), 1, 20);
+    const double kShown = fade_s > 0 ? fade_s + kFade : 1e9;
     ImGuiViewport* vp = ImGui::GetMainViewport();
     float y = driver_notice(vp->Pos.y + (perfstats_visible() ? .085f : .015f) * vp->Size.y);
     valve_notice();
@@ -5878,13 +5883,15 @@ void draw_notices() {
     // (someone's chat line: here as in 0.1.9.3 while the room chat is off, as it comes; on, it is the chat's - over the game
     // beside its button, chat_app.cpp)
     const bool room_chat = chat::hub_chat();
-    for (auto it = lines.rbegin(); it != lines.rend() && show.size() < 3; ++it) {
+    for (auto it = lines.rbegin(); it != lines.rend() && (int)show.size() < most; ++it) {
         if (it->serial <= s.seen_line || now - it->time > kShown) break;
-        if (it->kind != NetLine::Mine && (it->kind != NetLine::Chat || !room_chat)) show.insert(show.begin(), &*it);
+        // (your own too, as the chat over the game has them)
+        const bool talk = it->kind == NetLine::Chat || it->kind == NetLine::Mine;
+        if (!talk || !room_chat) show.insert(show.begin(), &*it);
     }
     for (const NetLine* l : show) {
         float a = (float)std::clamp((kShown - (now - l->time)) / kFade, 0.0, 1.0);
-        bool chat = l->kind == NetLine::Chat;
+        bool chat = l->kind == NetLine::Chat || l->kind == NetLine::Mine;
         ImU32 ink = line_ink(*l);
         y = notice_plate(y, a, chat ? l->nick + ":" : "", line_text(*l), ink, chat || !ink ? 0 : ink);
     }
@@ -5903,6 +5910,7 @@ void settings_panel(bool* open) {
     net_poll();  // (the room's events, open or not: the chat and the notices)
     chat_app_init();
     chat_app_frame();  // (the port's chat: its state; over the game its button and last lines, chat_app.cpp)
+    hub_pages_frame();  // (the hub list's pages while the game searches for hubs, hub_pages.cpp)
     text_field_frame();  // (what was typed in the Android text field, if it was asked for)
     if (g_chat_asked.exchange(false)) open_chat_sheet();  // (the chat button over the game: settings_panel_open_chat)
     chat_sheet_frame();  // (its sheet: the lines to it, what was typed in it to the chat)

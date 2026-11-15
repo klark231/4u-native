@@ -69,6 +69,7 @@
 #include "app_jni.h"  // (app_call_activity: the layout editor's Add pictures)
 #include "app_settings.h"
 #include "chat/chat_overlay.h"  // (the chat button: a finger on it is its own)
+#include "hub_pages.h"           // (the hub list's page buttons, the same)
 #include "game_options.h"
 #include "settings_locale.h"
 #include "settings_panel.h"
@@ -2327,6 +2328,11 @@ bool finger_event(const SDL_Event &e) {
                 haptics_tap();
                 return true;
             }
+            if (hub_pages_down(e.tfinger.x, e.tfinger.y)) {  // (the hub list's pages: hub_pages.cpp)
+                f->kind = F_MENU, f->ctl = -1;
+                haptics_tap();
+                return true;
+            }
             if (chat::bubble_down(e.tfinger.x, e.tfinger.y)) {  // (the chat button: chat/chat_overlay.cpp)
                 f->kind = F_CHAT;
                 return true;
@@ -2367,7 +2373,12 @@ bool finger_event(const SDL_Event &e) {
             Geo g = place(s.layout, c, s.w, s.h);
             if (hypotf(x - g.c.x, y - g.c.y) > g.r) c = -1;
         }
-        // the chat button (chat/chat_overlay.cpp), where no control is: the controls keep their place over it
+        // the hub list's page buttons and the chat button, where no control is: the controls keep their place over them
+        if (c < 0 && hub_pages_down(e.tfinger.x, e.tfinger.y)) {
+            f->kind = F_MENU, f->ctl = -1;
+            haptics_tap();
+            return true;
+        }
         if (c < 0 && chat::bubble_down(e.tfinger.x, e.tfinger.y)) {
             f->kind = F_CHAT;
             return true;

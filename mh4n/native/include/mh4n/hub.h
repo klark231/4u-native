@@ -17,6 +17,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -194,5 +195,28 @@ struct ServerCheck {
 /// thread. A hub of another game is not counted.
 std::vector<ServerCheck> CheckServers(const std::vector<Endpoint>& servers, Family family, const std::string& key,
                                       int timeout_ms = 5000);
+
+// ---- pages of the hub list (hub_medium.cpp) ------------------------------------------------------------------------
+
+/// The game keeps at most 15 networks from one search (the UDS service's MaxBeaconFrames), and a server with many hubs
+/// answers with only some of them (a few picked at random). So the hubs of the last searches are kept for a while, in
+/// one fixed order (by MAC address), and the game is given one page of them at a time, as gu-native's Join Hub screen:
+/// a page is chosen with the buttons over the game (app_native/hub_pages.cpp), and the game's next search shows it.
+constexpr int kHubsPerPage = 15;
+
+struct Pages {
+    int count = 1;   ///< pages the hubs found fill (1 when they fit in one)
+    int chosen = 0;  ///< the page the game is given (0 based)
+    int first = 0, last = 0, total = 0;  ///< which hubs it holds, #first to #last (1 based) of total
+};
+Pages GetPages();
+void ChoosePage(int page);  ///< out of range: the first
+void StepPage(int dir);     ///< the page before (-1) or after (+1), round the ends
+
+/// When the game last asked the UDS service for the networks around (RecvBeaconBroadcastData): its search screen is
+/// open while it keeps asking. Steady clock nanoseconds; 0: never.
+inline std::atomic<long long> g_last_game_search{0};
+/// The game searched in the last few seconds and is not in a hub (the page buttons show only then).
+bool GameSearching();
 
 }  // namespace mh4n::hub

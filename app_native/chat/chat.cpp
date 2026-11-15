@@ -83,11 +83,6 @@ struct Relay {
     int backoff = 2;
     std::string error;
 };
-struct Rate {  // what this device said in a chat (the anti-spam's own limits)
-    std::deque<int64_t> times;
-    std::string last;
-    int64_t last_ms = 0;
-};
 struct Sender {  // what someone said lately (the anti-spam's limits on others)
     std::deque<int64_t> times;
     int64_t silenced_until = 0;
@@ -128,7 +123,6 @@ struct State {
     std::deque<Line> recent;
     unsigned read[4] = {0, 0, 0, 0};
     std::map<std::string, unsigned> read_direct;
-    std::map<std::string, Rate> rates;
     std::map<std::string, Sender> senders;
     // relays
     std::vector<Relay> conns;
@@ -647,27 +641,9 @@ void stop() {
     if (g.th.joinable()) g.th.join();
 }
 
-bool rate_ok_locked(int channel, const std::string &peer, const std::string &text, std::string *why) {
-    Rate &r = g.rates[std::to_string(channel) + peer];
-    int64_t now = ms_now();
-    bool pub = channel == GLOBAL || channel == GENERAL;
-    int64_t gap = pub ? 4000 : 1000, window = pub ? 60000 : 30000;
-    size_t most = pub ? 5 : 12;
-    while (!r.times.empty() && now - r.times.front() > window) r.times.pop_front();
-    auto wait = [why](int64_t ms) {
-        if (why) *why = "\x01wait\x01" + std::to_string((ms + 999) / 1000);
-        return false;
-    };
-    if (now - r.last_ms < gap) return wait(gap - (now - r.last_ms));
-    if (r.times.size() >= most) return wait(window - (now - r.times.front()));
-    if (!text.empty() && text == r.last && now - r.last_ms < 60000) {
-        if (why) *why = "\x01same\x01";
-        return false;
-    }
-    r.times.push_back(now);
-    r.last = text, r.last_ms = now;
-    return true;
-}
+// No limit on what this device says: as fast as the player types, the same line as often as they like. (Others still
+// stop showing someone who sends more than 6 lines in 20 seconds, admit_locked, and the public relays may drop a flood.)
+bool rate_ok_locked(int, const std::string &, const std::string &, std::string *) { return true; }
 bool online_locked(const std::string &key) {
     auto it = g.online.find(key);
     return it != g.online.end() && unix_now() - it->second.seen < ONLINE_WITHIN;

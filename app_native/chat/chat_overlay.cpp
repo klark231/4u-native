@@ -1,6 +1,6 @@
 // The chat over the game: chat_overlay.h. The last lines as plain text with a shadow in the top left corner, as AzaharPlus's
 // overlay has them (their size, how many, the shadow, the background and how long they stay are the Chat page's), and the
-// chat button: a rounded square that only opens the chat, with the count of lines not read on it.
+// chat button: a rounded square in the menu's wine and gold that only opens the chat, with the count of lines not read on it.
 #include "chat_overlay.h"
 
 #include <SDL3/SDL.h>
@@ -109,17 +109,20 @@ void overlay_draw(float w, float h) {
         const float op = std::clamp(look("buttonop", 100), 10, 100) / 100.f, sd = side(), bx = g_bx * w, by = g_by * h;
         const ImVec2 lo(bx - sd * .5f, by - sd * .5f), hi(bx + sd * .5f, by + sd * .5f);
         const float round = sd * .3f;
-        const ImU32 navy = IM_COL32(31, 36, 96, 255), lilac = IM_COL32(232, 222, 255, 255);
+        // (the touch controls' colours: a wine plate with a bronze edge, a gold bubble with wine lines in it)
+        const ImU32 wine = IM_COL32(50, 25, 24, 236), pressed = IM_COL32(84, 44, 32, 245), edge = IM_COL32(196, 150, 70, 255),
+                    gold = IM_COL32(226, 182, 92, 255), ink = IM_COL32(50, 25, 24, 255);
         dl->AddRectFilled(ImVec2(lo.x, lo.y + 2 * d), ImVec2(hi.x, hi.y + 2 * d), faded(IM_COL32(0, 0, 0, 255), .25f * op), round);
-        dl->AddRectFilled(lo, hi, faded(g_drag && g_dragged ? IM_COL32(205, 195, 245, 255) : lilac, op), round);
+        dl->AddRectFilled(lo, hi, faded(g_drag && g_dragged ? pressed : wine, op), round);
+        dl->AddRect(lo, hi, faded(edge, op), round, 0, std::max(1.5f, 2 * d));
         const float bw = sd * .46f, bh = sd * .34f;
         const ImVec2 a(bx - bw * .5f, by - bh * .62f), b(bx + bw * .5f, by + bh * .38f);
-        dl->AddRectFilled(a, b, faded(navy, op), bh * .22f);
+        dl->AddRectFilled(a, b, faded(gold, op), bh * .22f);
         const ImVec2 tail[3] = {ImVec2(bx - bw * .38f, b.y - 1), ImVec2(bx - bw * .38f, b.y + bh * .34f), ImVec2(bx - bw * .06f, b.y - 1)};
-        dl->AddConvexPolyFilled(tail, 3, faded(navy, op));
+        dl->AddConvexPolyFilled(tail, 3, faded(gold, op));
         for (int i = 0; i < 3; i++) {
             const float ly = a.y + bh * (.22f + i * .26f);
-            dl->AddRectFilled(ImVec2(a.x + bw * .16f, ly), ImVec2(b.x - bw * (i == 2 ? .42f : .16f), ly + bh * .1f), faded(lilac, op), bh * .05f);
+            dl->AddRectFilled(ImVec2(a.x + bw * .16f, ly), ImVec2(b.x - bw * (i == 2 ? .42f : .16f), ly + bh * .1f), faded(ink, op), bh * .05f);
         }
         int unread = 0;
         for (int c = 0; c < CHANNELS; c++)
@@ -129,7 +132,8 @@ void overlay_draw(float w, float h) {
             snprintf(n, sizeof n, "%d", std::min(unread, 99));
             const float fs = sd * .26f, rr = sd * .19f;
             const ImVec2 c(hi.x - rr * .3f, lo.y + rr * .3f);
-            dl->AddCircleFilled(c, rr, faded(IM_COL32(186, 26, 26, 255), op), 24);
+            dl->AddCircleFilled(c, rr, faded(IM_COL32(176, 34, 30, 255), op), 24);  // (the menu's red rule)
+            dl->AddCircle(c, rr, faded(IM_COL32(196, 150, 70, 255), op), 24, std::max(1.f, d));
             const ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0, n);
             dl->AddText(font, fs, ImVec2(c.x - ts.x * .5f, c.y - ts.y * .5f), faded(IM_COL32(255, 255, 255, 255), op), n);
         }

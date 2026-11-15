@@ -76,6 +76,7 @@
 //    structure is zero (Azahar leaves it uninitialised).
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -92,6 +93,7 @@
 
 #include "../../kernel/deterministic.h"  // kernel_detail::ScheduleThreadSafe (the runtime module reaches it the same way)
 #include "mh4n/cfg.h"
+#include "mh4n/hub.h"
 #include "mh4n/clock.h"
 #include "mh4n/ipc.h"
 #include "mh4n/kernel.h"
@@ -961,6 +963,13 @@ private:
         if (out_buffer->Size() != out_buffer_size) {
             MH4N_LOG(Error, kLog, "RecvBeaconBroadcastData output buffer is {:#x} bytes, not {:#x}",
                      out_buffer->Size(), out_buffer_size);
+        }
+
+        // (the game's search screen is open while it keeps asking: the hub list's page buttons show, mh4n/hub.h)
+        if (mac_address == rooms::kBroadcastMac) {
+            hub::g_last_game_search = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count();
         }
 
         // GetReceivedBeacons: the one of the MAC address asked for (taken out of the list), or all of them.

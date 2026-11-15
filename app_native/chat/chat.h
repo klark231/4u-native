@@ -17,9 +17,8 @@
 // chat's settings live in the same file: deleting the app loses them, and that is fine. Nothing said is written to disk.
 //
 // Moderation is each player's own: mute (their lines no longer show) and block (no lines, private messages, friend
-// requests or presence; out of the friends) act only on the device of the player who does it. Against spam: a player
-// can send a line every few seconds and the same line once a minute, and someone who sends too many is silenced here for
-// a few minutes.
+// requests or presence; out of the friends) act only on the device of the player who does it. Against spam: someone
+// who sends too many lines is silenced here for a few minutes (what this device sends has no limit).
 //
 // Threads: every function may be called from the interface's thread; the relays are served by a thread of their own,
 // the hub's messages arrive on the link's threads (hub_line).
