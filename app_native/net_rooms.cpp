@@ -461,6 +461,17 @@ std::string net_hub_servers_text() {
     return text.empty() ? "off" : text;
 }
 
+std::string net_hub_chat_scope() {
+    const rooms::HubStatus hs = rooms::GetHubStatus();
+    if (hs.hub_id.empty() || !(hs.hosting || hs.linked)) return "";
+    const std::string text = hs.family + "/" + app_setting("Network", "HubKey", "") + "/" + hs.hub_id;
+    uint64_t h = 1469598103934665603ull;  // (FNV-1a: the same on every device, as a relay's tag must be)
+    for (const unsigned char c : text) h = (h ^ c) * 1099511628211ull;
+    char out[17];
+    snprintf(out, sizeof out, "%016llx", (unsigned long long)h);
+    return out;
+}
+
 bool net_hub_join(std::string* error) {
     rooms::HubRequest request;
     request.keep_room = net_crossplay();

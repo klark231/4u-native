@@ -79,6 +79,9 @@ NetLobby net_lobby();
 // mh4u-app.ini's [Network] (HubServers, HubKey; HubFamily is not used while mh4n::hub::kCrossRegion is on), and
 // used by the Multiplayer tab's "Hub servers" section. Players of every region with the same matchmaking key see each
 // other's hubs.
+// What the Hub chat is scoped to: 16 hex digits of the hub this device hosts or plays on (its host's MAC, the matchmaking key
+// and the game's family), the same on every device in that hub and on none outside it; "" when it is in no hub.
+std::string net_hub_chat_scope();
 // The servers as a list ([Network] HubServers: the servers apart by spaces; empty is the default server, "off" none; up to
 // mh4n::hub::kMaxServers). net_hub_server_list gives them as they are used (the default one when none was typed, none
 // when it is off); _set saves a list (an empty one is "off"; false: too many). A file of the previous build, with the two

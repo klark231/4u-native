@@ -40,6 +40,9 @@ std::string explain(const std::string &coded) {
                                     "El chat de la sala está apagado: actívalo arriba para hablar en la sala.")
                                 : t("The hub chat is off: turn it on above to talk in the hub.",
                                     "El chat de la sala está apagado: actívalo arriba para hablar en la sala.");
+    if (what == "nohubnet")
+        return t("You are not in a hub: host one or join one in the game, and its players can read you here.",
+                 "No estás en un hub: crea uno o entra a uno en el juego, y sus jugadores te leen aquí.");
     if (what == "hubshare")
         return t("Everyone here is already with you: share it with a friend, or in Global or General.",
                  "Todos acá ya están contigo: compártelo con un amigo, o en Global o General.");
@@ -80,6 +83,7 @@ std::string who(const Line &l) {
     if (l.system) return "";
     if (l.mine) return t("You", "Tú");  // (this device's own lines: no mark of a game or a room)
     if (l.channel == HUB) return l.name + " (" + t("Room", "Sala") + ")";
+    if (l.channel == HUBCHAT) return l.name + " (Hub)";
     if (l.channel == FRIEND) return l.name;
     if (l.game == "mh4u") return l.name + " (MH4U)";
     if (l.game == "mhgu") return l.name + " (MHGU)";
@@ -88,7 +92,9 @@ std::string who(const Line &l) {
 
 std::string channel_name(int channel) {
     switch (channel) {
-    case MIXED: return t("Mixed", "Mixto");
+    case MIXED: return t("Mixed (Room + Hub)", "Mixto (Sala + Hub)");
+    case MIXED_ALL: return t("Mixed (All)", "Mixto (Todos)");
+    case HUBCHAT: return t("Hub", "Hub");
     case GLOBAL: return t("Global", "Global");
     case GENERAL: return std::string(t("General", "General")) + " (" + game_title(game()) + ")";
     case HUB: return game() == "mh4u" ? t("Room", "Sala") : t("Hub", "Sala");
@@ -98,10 +104,18 @@ std::string channel_name(int channel) {
 std::string channel_help(int channel) {
     switch (channel) {
     case MIXED:
-        return t("The room and Global as one. What you say goes to both. What the others say in Global passes on into the room, as "
-                 "\"Name (MH4U): text\" under your room nickname, so Azahar and Citra players read it too.",
-                 "La sala y Global como uno. Lo que dices va a las dos. Lo que dicen los demás en Global pasa a la sala, como "
-                 "\"Nombre (MH4U): texto\" con tu apodo de sala, así que los de Azahar y Citra también lo leen.");
+        return t("The room and the hub as one. What you say goes to both. What the others say in one passes into the other, as "
+                 "\"Name (Hub): text\" or \"Name (Room): text\" under your nickname, so Azahar and Citra players and hub players read each other.",
+                 "La sala y el hub como uno. Lo que dices va a los dos. Lo que dicen los demás en uno pasa al otro, como "
+                 "\"Nombre (Hub): texto\" o \"Nombre (Sala): texto\" con tu apodo, así que los de Azahar y Citra y los del hub se leen.");
+    case MIXED_ALL:
+        return t("The room, the hub and Global as one. What you say goes to all three and you read all three. Global is not passed "
+                 "on to the others: only the room and the hub pass into each other.",
+                 "La sala, el hub y Global como uno. Lo que dices va a los tres y lees los tres. Global no se pasa a los demás: solo "
+                 "la sala y el hub pasan de uno al otro.");
+    case HUBCHAT:
+        return t("Only the players of the hub you are in, over the online chat: nobody outside it reads it.",
+                 "Solo los jugadores del hub en el que estás, por el chat en línea: nadie fuera de él lo lee.");
     case GLOBAL:
         return t("Everyone in the online chat, from both ports (MHGU and MH4U). Anyone can read it: never share anything private.",
                  "Todos los del chat en línea, de los dos ports (MHGU y MH4U). Cualquiera puede leerlo: nunca compartas nada privado.");

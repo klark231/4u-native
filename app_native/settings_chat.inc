@@ -6,9 +6,9 @@
 // The chat's settings are its own (chat.txt beside mh4u-app.ini), applied at once: Save and leaving without it leave them
 // (but Room messages over the game, [Network] Notices, as before). Its texts carry their Spanish beside them.
 
-int g_chat = -1;  // the chat the page shows (FRIEND: with g_chat_peer, a friend's key); -1: not picked yet (the room's
+int g_chat = -1;  // the chat the page and the sheet show (FRIEND: with g_chat_peer, a friend's key); -1: not picked yet (the room's
+                  // while in one, else Global)
 std::string g_chat_peer;
-bool g_dialog_from_button = true;  // (the chat dialog: opened by the chat button, over the game: Back closes the menu with it)  // while in one, else Global)
 const char* cs(const char* en, const char* es) {
     chat::set_spanish(spanish());
     return chat::t(en, es);
@@ -49,8 +49,7 @@ void chat_turn_on() {
 }
 void chat_open(int channel, const std::string& peer) {
     g_chat = channel, g_chat_peer = peer;
-    g_dialog_from_button = false;  // (from the menu: Back goes back to it)
-    push(View::ChatDialog, "");
+    open_chat_sheet();
 }
 // A room shared in the chat: where to (the room's own players are already in it: friends online, General, Global)
 void chat_share(int kind, const std::string& a, const std::string& b) {
@@ -173,12 +172,23 @@ void set_chat_dialog_opacity(int pct) {
     app_setting_set("Chat", "DialogOpacity", std::to_string(g_dialog_opacity));
     app_settings_save();
 }
+// One number of the overlay's look (chat::look): a row that adds step per turn, within lo and hi
+void look_row(std::vector<Row>& r, const char* id, const char* title, const char* key, int def, int lo, int hi, int step,
+              const char* unit, const char* help) {
+    const int now = chat::look(key, def);
+    Row row;
+    row.id = id, row.title = title, row.value = std::to_string(now) + unit, row.number = true, row.help = help;
+    const std::string k = key;
+    row.adjust = [k, def, lo, hi, step](int d) { chat::set_look(k.c_str(), std::clamp(chat::look(k.c_str(), def) + d * step, lo, hi)); };
+    r.push_back(std::move(row));
+}
 int g_bubble_pct = -1;
 void chat_page_rows(std::vector<Row>& r) {
     cs("", "");  // (the language)
     std::vector<chat::Person> people = chat::people();
     if (g_chat < 0) g_chat = chat::bridged() ? chat::MIXED : chat::hub_chat() && chat::hub_up() ? chat::HUB : chat::GLOBAL;
-    if (g_chat == chat::MIXED && !chat::bridged()) g_chat = chat::hub_chat() && chat::hub_up() ? chat::HUB : chat::GLOBAL;  // (Mixed ended)
+    if ((g_chat == chat::MIXED || g_chat == chat::MIXED_ALL) && !chat::bridged())
+        g_chat = chat::hub_chat() && chat::hub_up() ? chat::HUB : chat::GLOBAL;  // (Mixed ended)
     {  // (a room joined since the page last showed and the online chat off: the room's chat, not the Global or General that
        // a page first seen before the room had picked, which only says to turn the online chat on; picking them again stays)
         static bool hub_was_up;
@@ -196,13 +206,10 @@ void chat_page_rows(std::vector<Row>& r) {
         std::vector<std::string> names;
         std::vector<std::pair<int, std::string>> to;
         int at = 0;
-        if (chat::bridged()) {  // (Play online with is Mixed: the room and Global as one, first)
-            int n = chat::unread(chat::MIXED);
-            names.push_back(chat::channel_name(chat::MIXED) + (n ? " (" + std::to_string(n) + ")" : std::string()));
-            to.push_back({chat::MIXED, ""});
-            if (g_chat == chat::MIXED) at = 0;
-        }
-        for (int c : {chat::HUB, chat::GENERAL, chat::GLOBAL}) {
+        std::vector<int> order;
+        if (chat::bridged()) order = {chat::MIXED, chat::MIXED_ALL};  // (Play online with is Mixed: the chats as one, first)
+        for (int c : {chat::HUB, chat::HUBCHAT, chat::GENERAL, chat::GLOBAL}) order.push_back(c);
+        for (int c : order) {
             int n = chat::unread(c);
             names.push_back(chat::channel_name(c) + (n ? " (" + std::to_string(n) + ")" : std::string()));
             to.push_back({c, ""});
@@ -221,10 +228,7 @@ void chat_page_rows(std::vector<Row>& r) {
         r.back().help = chat::channel_help(g_chat);
     }
     // (the lines and what to say are the chat button's dialog, over the game: View::ChatDialog; this page is its settings)
-    action(r, "chat.dialog", cs("Open the chat", "Abrir el chat"), []() {
-        g_dialog_from_button = false;
-        push(View::ChatDialog, "");
-    });
+    action(r, "chat.dialog", cs("Open the chat", "Abrir el chat"), []() { open_chat_sheet(); });
     r.back().help = cs("The chat dialog the chat button opens over the game: the lines, and a field to say something.",
                        "El diálogo del chat que abre el botón del chat sobre el juego: las líneas y un campo para decir algo.");
     std::vector<chat::Line> lines = chat::lines(g_chat, g_chat_peer, 30);
@@ -277,31 +281,50 @@ void chat_page_rows(std::vector<Row>& r) {
     header(r, "chat.options", cs("Options", "Opciones"));
     add_choice(r, "chat.overlay", cs("Lines over the game", "Líneas sobre el juego"), chat::overlay(), {cs("Off", "Apagado"), cs("Room and friends", "Sala y amigos"), cs("All", "Todos")},
                [](int i) { chat::set_overlay(i); });
-    r.back().help = cs("New lines show for a few seconds over the game, beside the chat button.",
-                       "Las líneas nuevas se ven unos segundos sobre el juego, junto al botón del chat.");
+    r.back().help = cs("New lines show over the game, top left, and fade out after the fade delay.",
+                       "Las líneas nuevas se ven sobre el juego, arriba a la izquierda, y se desvanecen tras el tiempo de desvanecido.");
     add_bool(r, "net.notices", "Room messages over the game", &s.draft.notices, "Notices");
+    {  // the lines' look (AzaharPlus's and CitraMMJ's chat overlay settings), at once
+        look_row(r, "chat.look.textsize", cs("Chat text size", "Tamaño del texto del chat"), "textsize", 14, 8, 40, 1, "",
+                 cs("The size of the lines over the game.", "El tamaño de las líneas sobre el juego."));
+        look_row(r, "chat.look.lines", cs("Chat lines", "Líneas del chat"), "lines", 8, 1, 20, 1, "",
+                 cs("How many lines show over the game at most.", "Cuántas líneas se ven como máximo sobre el juego."));
+        look_row(r, "chat.look.fade", cs("Fade delay", "Tiempo de desvanecido"), "fade", 10, 0, 60, 1, " s",
+                 cs("Seconds a line stays before it fades out. 0: it never fades.", "Segundos que una línea queda antes de desvanecerse. 0: nunca se desvanece."));
+        look_row(r, "chat.look.shadowr", cs("Shadow radius", "Radio de la sombra"), "shadowr", 2, 0, 10, 1, "",
+                 cs("How soft the shadow around the text is. 0: none but its offset.", "Qué tan suave es la sombra del texto. 0: solo su desplazamiento."));
+        look_row(r, "chat.look.shadowx", cs("Shadow X offset", "Desplazamiento X de la sombra"), "shadowx", 1, -8, 8, 1, "",
+                 cs("The shadow's offset to the right (left if below 0).", "El desplazamiento de la sombra a la derecha (a la izquierda si es menor que 0)."));
+        look_row(r, "chat.look.shadowy", cs("Shadow Y offset", "Desplazamiento Y de la sombra"), "shadowy", 1, -8, 8, 1, "",
+                 cs("The shadow's offset down (up if below 0).", "El desplazamiento de la sombra hacia abajo (hacia arriba si es menor que 0)."));
+        look_row(r, "chat.look.bg", cs("Background opacity", "Opacidad del fondo"), "bg", 40, 0, 100, 5, " %",
+                 cs("The black behind the lines. 0: none.", "El negro detrás de las líneas. 0: ninguno."));
+    }
     {
         Row row;
         row.id = "chat.bubble", row.title = cs("Chat button", "Botón del chat");
         bool on = chat::bubble_shown();
         row.toggle = on, row.value = on ? cs("On", "Activo") : cs("Off", "Apagado");
-        row.help = cs("A round button over the game while the online chat is on, or the room chat is on and you are in a room: "
-                      "a tap opens the chat dialog, a drag moves it. The number on it: lines not read yet.",
-                      "Un botón redondo sobre el juego mientras el chat en línea está activo, o el chat de la sala está activo "
+        row.help = cs("A button over the game while the online chat is on, or the room chat is on and you are in a room: "
+                      "a tap opens the chat, a drag moves it. The number on it: lines not read yet.",
+                      "Un botón sobre el juego mientras el chat en línea está activo, o el chat de la sala está activo "
                       "y estás en una sala: un toque abre el chat, arrastrarlo lo mueve. El número: líneas sin leer.");
         row.activate = []() { chat::set_bubble_shown(!chat::bubble_shown()); };
         row.adjust = [](int d) { chat::set_bubble_shown(d > 0); };
         r.push_back(std::move(row));
-        g_bubble_pct = (int)std::lround(chat::bubble_scale() * 100);
+        g_bubble_pct = (int)std::lround(chat::bubble_scale() * 56);  // (dp: 56 at its own size)
         Row size;
         size.id = "chat.bubble.size", size.title = cs("Chat button size", "Tamaño del botón del chat");
-        size.value = std::to_string(g_bubble_pct) + " %";
+        size.value = std::to_string(g_bubble_pct) + " dp";
         size.number = true;
-        size.adjust = [](int d) { chat::bubble_size(std::clamp(g_bubble_pct + d * 10, 60, 200) / 100.f); };
+        size.help = cs("The chat button's size.", "El tamaño del botón del chat.");
+        size.adjust = [](int d) { chat::bubble_size(std::clamp(g_bubble_pct + d * 4, 34, 112) / 56.f); };
         r.push_back(std::move(size));
+        look_row(r, "chat.look.buttonop", cs("Chat button opacity", "Opacidad del botón del chat"), "buttonop", 100, 10, 100, 5, " %",
+                 cs("How faint the chat button and its number are.", "Qué tan tenues son el botón del chat y su número."));
         action(r, "chat.bubble.reset", cs("Chat button back in its place", "Botón del chat a su lugar"), []() { chat::bubble_reset(); });
         r.back().arrow = false;
-        Row dlg;  // (the chat button's dialog: how much of the game shows through it)
+        Row dlg;  // (the chat dialog: how much of the game shows through it)
         dlg.id = "chat.dialog.opacity", dlg.title = cs("Chat dialog opacity", "Opacidad del diálogo del chat");
         dlg.value = std::to_string(chat_dialog_opacity()) + " %";
         dlg.number = true;
@@ -309,6 +332,13 @@ void chat_page_rows(std::vector<Row>& r) {
                       "El diálogo del chat que abre el botón del chat, sobre el juego: 20 % deja ver el juego, 100 % no.");
         dlg.adjust = [](int d) { set_chat_dialog_opacity(chat_dialog_opacity() + d * 10); };
         r.push_back(std::move(dlg));
+        action(r, "chat.look.reset", cs("Reset the chat look", "Restablecer el aspecto del chat"), []() {
+            chat::reset_look();
+            set_chat_dialog_opacity(90);
+        });
+        r.back().arrow = false;
+        r.back().help = cs("Text, lines, shadow, background, fade, button opacity and the dialog's opacity back as they come.",
+                           "Texto, líneas, sombra, fondo, desvanecido, opacidad del botón y del diálogo como vienen.");
     }
     {
         Row row;

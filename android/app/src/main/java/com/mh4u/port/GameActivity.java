@@ -300,6 +300,38 @@ public class GameActivity extends SDLActivity {
     }
     private static android.net.wifi.WifiManager.MulticastLock lanLock;
 
+
+    // ---- a normal Android text field and the chat's bottom sheet, polled by the native side (settings_panel.cpp) ----------
+
+    /** A text field over the game for what the settings ask to type (TextFieldDialog): kind 0 any, 1 nickname, 2 address, 3 digits, 4 password, 5 chat. */
+    public static void showTextField(String title, String hint, String initial, int kind, int maxLen, String error) {
+        SDLActivity activity = mSingleton;
+        if (activity != null) TextFieldDialog.show(activity, title, hint, initial, kind, maxLen, error);
+    }
+    /** 0 none, 1 open, 2 accepted, 3 cancelled. */
+    public static int textFieldState() { return TextFieldDialog.state; }
+    public static String textFieldResult() { return TextFieldDialog.result; }
+    public static void textFieldReset() { TextFieldDialog.reset(); }
+
+    /** The chat button's bottom sheet (ChatSheet). */
+    public static void showChatSheet(int opacity, String title, String hint, String send) {
+        SDLActivity activity = mSingleton;
+        if (activity != null) ChatSheet.show(activity, opacity, title, hint, send);
+    }
+    public static boolean chatSheetOpen() { return ChatSheet.open; }
+    public static void chatSheetUpdate(String channel, String lines, String hint) {
+        SDLActivity activity = mSingleton;
+        if (activity != null) ChatSheet.update(activity, channel, lines, hint);
+    }
+    public static void chatSheetError(String text) {
+        SDLActivity activity = mSingleton;
+        if (activity != null) ChatSheet.error(activity, text);
+    }
+    public static String chatSheetTakeSend() { return ChatSheet.takeSend(); }
+    public static boolean chatSheetTakeNext() { return ChatSheet.takeNext(); }
+    public static String chatSheetTakeJoin() { return ChatSheet.takeJoin(); }
+    public static void chatSheetClose() { ChatSheet.close(false); }
+
     /** Ajustes -> Carpeta del usuario (UserFolderActivity: the change is applied at the next start). */
     public static void showUserFolder() {
         SDLActivity activity = mSingleton;

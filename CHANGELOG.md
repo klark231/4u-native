@@ -4,15 +4,25 @@
 
 ## Unreleased
 
-- **Multiplayer, laid out as MHGU's Network tab:** *Local play and hubs* (**Host port (UDP)**, **Search hosts**, **Internet hubs**
+- **Multiplayer, laid out as MHGU's Network tab:** *Local play and hubs* (**Search hosts**, **Internet hubs**
   with **Hub servers**, **Matchmaking key**, **Check hub server**), *Play online with* (**This app's hubs**, **Citra Room**,
   **Mixed**) and **Citra Room** (its **Citra Nickname**, **Citra Room Browser**, server, password, and **Citra Web API URLs**: up to 8,
   two come with the app). Hub servers: up to 8, with Add and Remove.
 - **Search hosts** (a VPN's hosts) are asked too by *Search this Wi-Fi*.
-- **Chat:** the chat button opens a chat dialog over the game (AzaharPlus's): the lines, a field and Send, with **Chat dialog opacity**
-  in the Chat page. With *Play online with* **Mixed** there is a **Mixed** chat: what you say goes to the room and to Global, and
-  what the others say in Global passes into the room (as "Name (MH4U): text" under your nickname). Others show as "Name (Room)",
-  "Name (MH4U)" or "Name (MHGU)"; your own lines as "You".
+- **Normal text fields:** everything the settings ask you to type (nickname, address, password, hub servers, web API URLs, the
+  matchmaking key...) opens an Android text field with the phone's own keyboard, and its clipboard: long press to paste. The
+  app's own on-screen keys are gone.
+- **Chat, as AzaharPlus's:** the chat button only opens the chat: an Android bottom sheet over the game with the lines and a text
+  field with Send (its **Chat dialog opacity** is in the Chat page). Over the game the lines are plain text with a shadow, top
+  left; the Chat page has **Chat text size**, **Chat lines**, **Fade delay** (seconds, 0 = never fade), **Shadow radius**, **Shadow X
+  offset**, **Shadow Y offset**, **Background opacity**, **Chat button size** and **Chat button opacity** (which also fades the
+  count on the button). The chat's messages and "Say something" are no longer on the Chat page.
+- **Hub chat and Mixed chat:** a new **Hub** chat, only for the players of the hub you host or join (over the online chat's
+  relays, with a tag only that hub asks for: nobody outside it reads it). With *Play online with* **Mixed** there are two more:
+  **Mixed (Room + Hub)**, where what you say goes to the room and the hub, and what the others say in one passes into the other
+  (a room's chat carries no other name, so it comes as "Name (Hub): text" under your nickname, and the other way as "Name
+  (Room): text"), and **Mixed (All)**, which adds Global to what you say and read (Global is never passed on). Names show as
+  "Name (Room)", "Name (Hub)", "Name (MH4U)" or "Name (MHGU)"; your own lines as "You".
 - **Touch layout: Adaptive or Traditional** (Controls): Traditional is the emulator-style layout with its own list of buttons
   shown or hidden (all shown at first), a **C-stick**, **Auto run on the joystick** (off at first) and **Camera swipe** (off at first).
 

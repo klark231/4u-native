@@ -1165,6 +1165,8 @@ MediumStatus Medium::Status() const {
     st.hosting = core_->hosting;
     st.joining = core_->joining;
     st.linked = core_->client_link != nullptr;
+    st.in_hub = st.hosting || st.linked;
+    st.hub_mac = st.hosting ? core_->opt.mac : core_->client_host;
     st.players = static_cast<int>(core_->pairs.size());
     st.servers = core_->servers;
     st.problem = core_->problem;

@@ -50,16 +50,14 @@ void chat_app_init() {
     };
     p.hub_send = [](const std::string& text) { return net_say(text); };  // (its line comes back through net_rooms.cpp)
     p.default_name = []() { return app_setting("Network", "Nick"); };
+    p.hub_scope = []() { return net_hub_chat_scope(); };  // (the Hub chat: only the players of the hub this device is in)
     p.bridge = []() { return net_play_with() == PLAY_MIXED; };  // (Mixed: the room's chat and the online chat as one)
     p.log = chat_log;
     chat::init(p);
     chat::OverlayPort o;
     o.controls_shown = []() { return touch_controls_shown(); };
     o.menu_open = []() { return ui_settings_open(); };
-    o.open_chat = []() {
-        ui_open_settings();
-        settings_panel_open_chat();
-    };
+    o.open_chat = []() { settings_panel_open_chat(); };  // (a tap on the chat button: its bottom sheet, over the game)
     o.log = chat_log;
     chat::overlay_setup(o);
 }

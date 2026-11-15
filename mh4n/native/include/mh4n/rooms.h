@@ -179,6 +179,7 @@ struct HubStatus {
     bool joining = false;
     bool linked = false;     ///< this console plays on another's hub
     int players = 0;         ///< the consoles that joined this console's hub
+    std::string hub_id;      ///< the hub's host MAC in hex while hosting or linked ("" otherwise): the same on every console in it
     std::vector<HubServerStatus> servers;
     std::vector<HubListed> hubs;  ///< what a search finds now
     std::string problem;     ///< a sentence for the player: why nothing works, or what failed last

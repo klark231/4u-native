@@ -145,6 +145,168 @@ void app_call_activity(const char* method) {
 }
 
 namespace {
+// A static method of GameActivity with strings and ints, from the SDL thread. Strings go as UTF-16 (chat lines may carry
+// letters outside the basic plane: NewStringUTF takes only the JNI's own form of UTF-8).
+class ActivityJni {
+public:
+    ActivityJni()
+        : env_(static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv())), act_(static_cast<jobject>(SDL_GetAndroidActivity())) {
+        if (env_ && act_) cls_ = env_->GetObjectClass(act_);
+    }
+    ~ActivityJni() {
+        if (cls_) env_->DeleteLocalRef(cls_);
+        if (act_) env_->DeleteLocalRef(act_);
+    }
+    ActivityJni(const ActivityJni&) = delete;
+    ActivityJni& operator=(const ActivityJni&) = delete;
+    bool ok() const { return env_ && act_ && cls_; }
+    jmethodID method(const char* name, const char* signature) { return env_->GetStaticMethodID(cls_, name, signature); }
+    jstring str(const std::string& utf8) {
+        std::u16string u;
+        for (size_t i = 0; i < utf8.size();) {
+            const unsigned char c = (unsigned char)utf8[i];
+            uint32_t cp = c;
+            size_t n = 1;
+            if (c >= 0xf0 && i + 3 < utf8.size()) cp = ((c & 7u) << 18) | (((unsigned char)utf8[i + 1] & 63u) << 12) | (((unsigned char)utf8[i + 2] & 63u) << 6) | ((unsigned char)utf8[i + 3] & 63u), n = 4;
+            else if (c >= 0xe0 && i + 2 < utf8.size()) cp = ((c & 15u) << 12) | (((unsigned char)utf8[i + 1] & 63u) << 6) | ((unsigned char)utf8[i + 2] & 63u), n = 3;
+            else if (c >= 0xc0 && i + 1 < utf8.size()) cp = ((c & 31u) << 6) | ((unsigned char)utf8[i + 1] & 63u), n = 2;
+            i += n;
+            if (cp >= 0x10000) {
+                cp -= 0x10000;
+                u.push_back((char16_t)(0xd800 + (cp >> 10)));
+                u.push_back((char16_t)(0xdc00 + (cp & 0x3ff)));
+            } else {
+                u.push_back((char16_t)cp);
+            }
+        }
+        return env_->NewString(reinterpret_cast<const jchar*>(u.data()), (jsize)u.size());
+    }
+    std::string take(jstring j) {  // (a string that came back, as UTF-8)
+        std::string out;
+        if (!j) return out;
+        const jsize n = env_->GetStringLength(j);
+        const jchar* chars = env_->GetStringChars(j, nullptr);
+        for (jsize i = 0; chars && i < n; i++) {
+            uint32_t cp = chars[i];
+            if (cp >= 0xd800 && cp < 0xdc00 && i + 1 < n && chars[i + 1] >= 0xdc00 && chars[i + 1] < 0xe000)
+                cp = 0x10000 + ((cp - 0xd800) << 10) + (chars[++i] - 0xdc00);
+            if (cp < 0x80) out += (char)cp;
+            else if (cp < 0x800) out += (char)(0xc0 | (cp >> 6)), out += (char)(0x80 | (cp & 63));
+            else if (cp < 0x10000) out += (char)(0xe0 | (cp >> 12)), out += (char)(0x80 | ((cp >> 6) & 63)), out += (char)(0x80 | (cp & 63));
+            else out += (char)(0xf0 | (cp >> 18)), out += (char)(0x80 | ((cp >> 12) & 63)), out += (char)(0x80 | ((cp >> 6) & 63)), out += (char)(0x80 | (cp & 63));
+        }
+        if (chars) env_->ReleaseStringChars(j, chars);
+        env_->DeleteLocalRef(j);
+        return out;
+    }
+    void done() {
+        if (env_->ExceptionCheck()) {
+            env_->ExceptionDescribe();
+            env_->ExceptionClear();
+        }
+    }
+    JNIEnv* env() { return env_; }
+    jclass cls() { return cls_; }
+
+private:
+    JNIEnv* env_;
+    jobject act_;
+    jclass cls_ = nullptr;
+};
+}  // namespace
+
+void app_text_field_show(const std::string& title, const std::string& hint, const std::string& initial, int kind, int max_len,
+                         const std::string& error) {
+    ActivityJni j;
+    if (!j.ok()) return;
+    jmethodID id = j.method("showTextField", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IILjava/lang/String;)V");
+    if (id) {
+        jstring a = j.str(title), b = j.str(hint), c = j.str(initial), d = j.str(error);
+        j.env()->CallStaticVoidMethod(j.cls(), id, a, b, c, (jint)kind, (jint)max_len, d);
+        j.env()->DeleteLocalRef(a), j.env()->DeleteLocalRef(b), j.env()->DeleteLocalRef(c), j.env()->DeleteLocalRef(d);
+    }
+    j.done();
+}
+int app_text_field_state() {
+    ActivityJni j;
+    if (!j.ok()) return 0;
+    jmethodID id = j.method("textFieldState", "()I");
+    jint v = id ? j.env()->CallStaticIntMethod(j.cls(), id) : 0;
+    j.done();
+    return (int)v;
+}
+std::string app_text_field_result() {
+    ActivityJni j;
+    if (!j.ok()) return "";
+    jmethodID id = j.method("textFieldResult", "()Ljava/lang/String;");
+    std::string out = id ? j.take((jstring)j.env()->CallStaticObjectMethod(j.cls(), id)) : "";
+    j.done();
+    return out;
+}
+void app_text_field_reset() { CallActivity("textFieldReset", "()V"); }
+
+void app_chat_sheet_show(int opacity, const std::string& title, const std::string& hint, const std::string& send) {
+    ActivityJni j;
+    if (!j.ok()) return;
+    jmethodID id = j.method("showChatSheet", "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+    if (id) {
+        jstring a = j.str(title), b = j.str(hint), c = j.str(send);
+        j.env()->CallStaticVoidMethod(j.cls(), id, (jint)opacity, a, b, c);
+        j.env()->DeleteLocalRef(a), j.env()->DeleteLocalRef(b), j.env()->DeleteLocalRef(c);
+    }
+    j.done();
+}
+bool app_chat_sheet_open() {
+    ActivityJni j;
+    if (!j.ok()) return false;
+    jmethodID id = j.method("chatSheetOpen", "()Z");
+    const bool v = id && j.env()->CallStaticBooleanMethod(j.cls(), id);
+    j.done();
+    return v;
+}
+void app_chat_sheet_update(const std::string& channel, const std::string& lines, const std::string& hint) {
+    ActivityJni j;
+    if (!j.ok()) return;
+    jmethodID id = j.method("chatSheetUpdate", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+    if (id) {
+        jstring a = j.str(channel), b = j.str(lines), c = j.str(hint);
+        j.env()->CallStaticVoidMethod(j.cls(), id, a, b, c);
+        j.env()->DeleteLocalRef(a), j.env()->DeleteLocalRef(b), j.env()->DeleteLocalRef(c);
+    }
+    j.done();
+}
+void app_chat_sheet_error(const std::string& text) {
+    ActivityJni j;
+    if (!j.ok()) return;
+    jmethodID id = j.method("chatSheetError", "(Ljava/lang/String;)V");
+    if (id) {
+        jstring a = j.str(text);
+        j.env()->CallStaticVoidMethod(j.cls(), id, a);
+        j.env()->DeleteLocalRef(a);
+    }
+    j.done();
+}
+static std::string chat_sheet_string(const char* method) {
+    ActivityJni j;
+    if (!j.ok()) return "";
+    jmethodID id = j.method(method, "()Ljava/lang/String;");
+    std::string out = id ? j.take((jstring)j.env()->CallStaticObjectMethod(j.cls(), id)) : "";
+    j.done();
+    return out;
+}
+std::string app_chat_sheet_take_send() { return chat_sheet_string("chatSheetTakeSend"); }
+std::string app_chat_sheet_take_join() { return chat_sheet_string("chatSheetTakeJoin"); }
+bool app_chat_sheet_take_next() {
+    ActivityJni j;
+    if (!j.ok()) return false;
+    jmethodID id = j.method("chatSheetTakeNext", "()Z");
+    const bool v = id && j.env()->CallStaticBooleanMethod(j.cls(), id);
+    j.done();
+    return v;
+}
+void app_chat_sheet_close() { CallActivity("chatSheetClose", "()V"); }
+
+namespace {
 
 // ---- the screens, from the game thread to the window ---------------------------------------------
 

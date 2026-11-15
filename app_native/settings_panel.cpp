@@ -265,10 +265,9 @@ int index_of(const char* const (&keys)[N], const std::string& value) {
 
 // ---------------------------------------------------------------- the menu's state
 // (Page: a page one level down from a section's, State::at; MENU.md)
-enum class View { Main, Page, Buttons, ComboEdit, Keyboard, CloseChanges, Restart, Exit, Reset, RemoveDriver, RemoveMod, RemoveCheat,
+enum class View { Main, Page, Buttons, ComboEdit, CloseChanges, Restart, Exit, Reset, RemoveDriver, RemoveMod, RemoveCheat,
                   Conflicts, PadList, PadMap, OpenSite, OpenDiscord, Profiles, ProfileSlot,
                   Keybinds, KeyCapture, Chat, Friends, ChatOn,  // (the chat's: settings_chat.inc)
-                  ChatDialog,  // (the chat button's dialog over the game: touch_chat_dialog)
                   Verify };  // (System > Your game > Verify game files: verify_rows)
 // View::Buttons opened from the Controller rows (playing with a controller): its combined buttons alone, as the MHGU
 // port's where there are no touch controls
@@ -297,14 +296,13 @@ struct Row {
     std::function<void()> activate;
     std::function<void()> remove;          // a picker's remembered choice: the x at its right takes it out of the list
 };
-// The text being typed (View::Keyboard): the keys a filter lets in, at most `capacity` bytes; commit takes it (or
-// says why not, and the view stays)
+// What the settings ask to type (a normal Android text field: TextFieldDialog.java): the filter says what keyboard the phone
+// brings and what the text takes; commit takes it (or says why not, and the field comes up again)
 enum { KB_ANY, KB_NICK, KB_ADDRESS, KB_DIGITS, KB_SECRET, KB_CHAT };
 struct Keyboard {
     std::string title, hint, buffer;
-    size_t cursor = 0, capacity = 255;
+    size_t capacity = 255;
     int filter = KB_ANY;
-    bool upper = false, symbols = false;
     std::function<bool(const std::string&, std::string&)> commit;
 };
 // A row on the screen last frame (the keyboard's keys: the controller moves between them as they lie)
@@ -1132,121 +1130,55 @@ void ask_close(bool* open) {
         close_menu(open);
 }
 
-// ---------------------------------------------------------------- the keyboard
-// Typing in the Keyboard view: its keys, a physical keyboard's, or the phone's on-screen one (asked for with its key).
-// Text input is on while the view is up: 1 without the phone's keyboard (a physical one types), 2 with it
-int g_text_input = 0;
-SDL_Window* text_window() {
-    if (SDL_Window* w = SDL_GetKeyboardFocus()) return w;
-    int n = 0;
-    SDL_Window** all = SDL_GetWindows(&n);
-    SDL_Window* w = all && n > 0 ? all[0] : nullptr;
-    SDL_free(all);
-    return w;
+// ---------------------------------------------------------------- typing
+// What the settings ask to type goes to a normal Android text field over the game (TextFieldDialog.java): the phone's own
+// keyboard and its clipboard, as any app's (the app's own keys are gone). open_keyboard shows it and keeps what it asked;
+// text_field_frame (each frame) takes the answer: commit says yes, or why not, and then the field comes up again with the
+// text as it was typed and why.
+const char* say(const char* en, const char* es);  // (below)
+void open_chat_sheet();                            // (the chat sheet, below: the chat page opens it)
+bool g_text_waiting = false;
+int g_text_idle = 0;
+int text_kind(int filter) {
+    return filter == KB_NICK ? 1 : filter == KB_ADDRESS ? 2 : filter == KB_DIGITS ? 3 : filter == KB_SECRET ? 4 : filter == KB_CHAT ? 5 : 0;
 }
-void text_input(int want) {
-    if (want == g_text_input) return;  // (each frame: nothing to ask SDL for)
-    SDL_Window* w = text_window();
-    if (!w) return;
-    if (g_text_input) SDL_StopTextInput(w);
-    if (want) {
-        // the phone's keyboard as the text asks: digits, a name or an address as typed, a password, a chat line
-        SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, want == 2 ? "1" : "0");
-        SDL_PropertiesID props = SDL_CreateProperties();
-        int filter = s.keyboard.filter;
-        SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER,
-                              filter == KB_DIGITS   ? SDL_TEXTINPUT_TYPE_NUMBER
-                              : filter == KB_SECRET ? SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_VISIBLE
-                              : filter == KB_NICK   ? SDL_TEXTINPUT_TYPE_TEXT_USERNAME
-                                                    : SDL_TEXTINPUT_TYPE_TEXT);
-        SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_CAPITALIZATION_NUMBER,
-                              filter == KB_CHAT ? SDL_CAPITALIZE_SENTENCES : SDL_CAPITALIZE_NONE);
-        SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, filter == KB_CHAT);
-        SDL_StartTextInputWithProperties(w, props);
-        SDL_DestroyProperties(props);
-    }
-    g_text_input = want;
-}
-// The phone's keyboard, up again even if the player had put it away
-void phone_keyboard() {
-    text_input(0);
-    text_input(2);
-}
-// A character the text takes (a UTF-8 sequence): the nickname as a room allows it, an address, a port
-bool allowed(int filter, const std::string& ch) {
-    unsigned char c = (unsigned char)ch[0];
-    if (c < 0x20 || c == 0x7f) return false;
-    bool alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
-    switch (filter) {
-    case KB_NICK: return ch.size() == 1 && (alnum || c == ' ' || c == '.' || c == '_' || c == '-');
-    case KB_ADDRESS: return ch.size() == 1 && (alnum || c == '.' || c == '-' || c == ':');
-    case KB_DIGITS: return ch.size() == 1 && c >= '0' && c <= '9';
-    default: return true;
-    }
+void show_text_field(const std::string& error) {
+    app_text_field_reset();
+    const Keyboard& k = s.keyboard;
+    app_text_field_show(k.title, k.hint, k.buffer, text_kind(k.filter), (int)k.capacity, error);
+    g_text_waiting = true;
+    g_text_idle = 0;
 }
 void open_keyboard(const std::string& title, const std::string& initial, int filter, size_t capacity, const std::string& hint,
                    std::function<bool(const std::string&, std::string&)> commit) {
     s.keyboard = {};
     s.keyboard.title = title, s.keyboard.hint = hint, s.keyboard.buffer = initial;
-    s.keyboard.cursor = initial.size(), s.keyboard.capacity = capacity, s.keyboard.filter = filter;
+    s.keyboard.capacity = capacity, s.keyboard.filter = filter;
     s.keyboard.commit = std::move(commit);
-    push(View::Keyboard, "key.accept");
-    // (played by touch: the phone's own keyboard comes up at once, the view's keys under it - a controller's player
-    // keeps the view's keys first. Its key had to be found first before, and players took the phone's keyboard for
-    // gone, MHGU's Discord. The MHGU port's the same)
-    if (!controls_real_pad()) phone_keyboard();
+    show_text_field("");
 }
-// Typed text at the cursor, each character the filter lets in while there is room
-void insert(const std::string& text) {
-    Keyboard& k = s.keyboard;
-    for (size_t i = 0; i < text.size();) {
-        size_t n = 1;
-        while (i + n < text.size() && ((unsigned char)text[i + n] & 0xc0) == 0x80) ++n;
-        std::string ch = text.substr(i, n);
-        i += n;
-        if (!allowed(k.filter, ch) || k.buffer.size() + ch.size() > k.capacity) continue;
-        k.buffer.insert(k.cursor, ch);
-        k.cursor += ch.size();
+void text_field_frame() {
+    if (!g_text_waiting) return;
+    const int state = app_text_field_state();
+    if (state == 1) return;  // (open: the player is typing)
+    if (state == 0) {        // (not up: the activity was not there; do not wait for ever)
+        if (++g_text_idle > 180) g_text_waiting = false;
+        return;
     }
-    s.error.clear();
-}
-void erase_previous() {
-    Keyboard& k = s.keyboard;
-    if (!k.cursor) return;
-    size_t begin = k.cursor - 1;
-    while (begin && ((unsigned char)k.buffer[begin] & 0xc0) == 0x80) --begin;
-    k.buffer.erase(begin, k.cursor - begin);
-    k.cursor = begin;
-    s.error.clear();
-}
-void move_cursor(int d) {
-    Keyboard& k = s.keyboard;
-    if (d < 0 && k.cursor) {
-        --k.cursor;
-        while (k.cursor && ((unsigned char)k.buffer[k.cursor] & 0xc0) == 0x80) --k.cursor;
-    } else if (d > 0 && k.cursor < k.buffer.size()) {
-        ++k.cursor;
-        while (k.cursor < k.buffer.size() && ((unsigned char)k.buffer[k.cursor] & 0xc0) == 0x80) ++k.cursor;
-    }
-}
-void paste() {
-    if (char* clip = SDL_GetClipboardText()) {
-        std::string text = clip;
-        SDL_free(clip);
-        for (char& c : text)
-            if (c == '\n' || c == '\r' || c == '\t') c = ' ';
-        insert(text);
-    }
-}
-void accept_keyboard() {
-    std::string text = s.keyboard.buffer, error;
+    const std::string typed = app_text_field_result();
+    app_text_field_reset();
+    g_text_waiting = false;
+    if (state != 2) return;  // (cancelled)
+    std::string text = typed, error;
     while (!text.empty() && text.back() == ' ') text.pop_back();  // (spaces at the ends: never meant)
     while (!text.empty() && text.front() == ' ') text.erase(0, 1);
-    auto commit = s.keyboard.commit;
-    pop();  // (first: the commit may open another view, or join a room)
-    if (commit && !commit(text, error)) {
-        push(View::Keyboard, "key.accept");  // (back to the keys, the text as it was, and why)
-        s.error = error;
+    const Keyboard k = s.keyboard;
+    if (text.size() > k.capacity) error = say("That is too long.", "Es demasiado largo.");
+    if (error.empty() && k.commit && !k.commit(text, error) && error.empty()) error = say("That did not work.", "No funcionó.");
+    if (!error.empty()) {  // (the field again: the text as it was, and why)
+        s.keyboard = k;
+        s.keyboard.buffer = typed;
+        show_text_field(error);
     }
 }
 
@@ -2028,17 +1960,7 @@ void rows_play_with(std::vector<Row>& r) {
 }
 void reset_play_with() { net_set_play_with(PLAY_HUBS); }
 MENU_ENTRY("multiplayer", 11, [](std::vector<Row>& r) { header(r, "net.hub.head", say("Local play and hubs", "Juego local y hubs")); });
-// Host port (UDP) and Search hosts, as MHGU's Network tab has them: the port the room this phone hosts uses, and the hosts
-// (a VPN's) that "Search this Wi-Fi" asks besides the network's own
-void rows_host_port(std::vector<Row>& r) {
-    add_text(r, "net.port.top", "Host port (UDP)", &s.draft.host_port, KB_DIGITS, 5, "HostPort", s.draft.host_port,
-             say("The UDP port of the room this phone hosts, 1 to 65535; rooms use 24872. Everyone who joins types the same one. "
-                 "(The hub servers are reached over TCP at their own port: nothing listens here for them.)",
-                 "El puerto UDP de la sala que aloja este teléfono, de 1 a 65535; las salas usan 24872. Todos los que entran escriben el mismo. "
-                 "(A los servidores de hubs se llega por TCP a su propio puerto: aquí no escucha nada para ellos.)"),
-             check_port);
-}
-void reset_host_port() { s.draft.host_port = defaults().host_port; }
+// Search hosts, as MHGU's Network tab has it: the hosts (a VPN's) that "Search this Wi-Fi" asks besides the network's own
 void rows_search_hosts(std::vector<Row>& r) {
     const std::string hosts = app_setting("Network", "SearchHosts", "");
     Row row;
@@ -2064,7 +1986,6 @@ void reset_search_hosts() {
     app_setting_set("Network", "SearchHosts", "");
     app_settings_save();
 }
-MENU_ENTRY("multiplayer", 12, rows_host_port, reset_host_port);
 MENU_ENTRY("multiplayer", 13, rows_search_hosts, reset_search_hosts);
 MENU_PAGE("multiplayer/hubs", "Internet hubs", "multiplayer", 14, uses_hubs, [](Row& r) {
     r.value = hubs_summary();
@@ -3778,55 +3699,6 @@ std::vector<Row> main_rows() {
     return r;
 }
 
-// The keyboard's keys, ten to a line in the phone's order (letters, or symbols and Spanish letters), the ones the text
-// can't take faded; then Shift, Symbols, Space, Delete, Clear; Paste, the phone's keyboard, Cancel, Accept
-void keyboard_rows(std::vector<Row>& r) {
-    const Keyboard& k = s.keyboard;
-    static const char* const LETTERS[4] = {"1234567890", "qwertyuiop", "asdfghjkl-", "zxcvbnm._:"};
-    static const char* const SYMBOLS[4][10] = {
-        {"!", "?", "@", "#", "$", "%", "&", "*", "(", ")"},
-        {"+", "=", "/", "\\", "'", "\"", ";", ",", "<", ">"},
-        {"[", "]", "{", "}", "~", "^", "|", "`", "_", "-"},
-        {"\xC3\xA1", "\xC3\xA9", "\xC3\xAD", "\xC3\xB3", "\xC3\xBA", "\xC3\xB1", "\xC3\xBC", "\xC2\xBF", "\xC2\xA1", "."}};
-    static const char* const ACCENTS_UPPER[10] = {"\xC3\x81", "\xC3\x89", "\xC3\x8D", "\xC3\x93", "\xC3\x9A",
-                                                  "\xC3\x91", "\xC3\x9C", "\xC2\xBF", "\xC2\xA1", "."};
-    int n = 0;
-    for (int line = 0; line < 4; line++)
-        for (int i = 0; i < 10; i++) {
-            std::string ch = !k.symbols           ? std::string(1, k.upper ? (char)SDL_toupper(LETTERS[line][i]) : LETTERS[line][i])
-                             : line == 3 && k.upper ? ACCENTS_UPPER[i]
-                                                    : SYMBOLS[line][i];
-            Row row;
-            row.id = "key." + std::to_string(n++), row.title = ch;
-            row.grid = 10;
-            row.enabled = allowed(k.filter, ch);
-            row.activate = [ch]() { insert(ch); };
-            r.push_back(std::move(row));
-        }
-    auto key = [&r](const char* id, const std::string& title, std::function<void()> fn, int grid, bool enabled = true) {
-        Row row;
-        row.id = id, row.title = title;
-        row.grid = grid;
-        row.enabled = enabled;
-        row.activate = std::move(fn);
-        r.push_back(std::move(row));
-    };
-    key("key.shift", tr("Shift"), []() { s.keyboard.upper = !s.keyboard.upper; }, 5);
-    r.back().current = k.upper;
-    key("key.symbols", tr(k.symbols ? "Letters" : "Symbols"), []() { s.keyboard.symbols = !s.keyboard.symbols; }, 5);
-    key("key.space", tr("Space"), []() { insert(" "); }, 5, allowed(k.filter, " "));
-    key("key.delete", tr("Delete"), []() { erase_previous(); }, 5);
-    key("key.clear", tr("Clear"), []() {
-        s.keyboard.buffer.clear();
-        s.keyboard.cursor = 0;
-        s.error.clear();
-    }, 5);
-    key("key.paste", tr("Paste"), []() { paste(); }, 4);
-    key("key.phone", tr("Phone keyboard"), []() { phone_keyboard(); }, 4);
-    key("key.cancel", tr("Cancel"), []() { pop(); }, 4);
-    key("key.accept", tr("Accept"), []() { accept_keyboard(); }, 4);
-}
-
 // Mapping a controller (padmap.h): the list of those connected, then its steps (MHGU's pad_list_rows, pad_map_rows)
 void pad_list_rows(std::vector<Row>& r) {
     padmap_watch();
@@ -4233,10 +4105,6 @@ std::vector<Row> rows_for_view(bool* open) {
         r.back().arrow = false;
         return r;
     }
-    if (s.view == View::Keyboard) {
-        keyboard_rows(r);
-        return r;
-    }
     if (s.view == View::Keybinds) {
         keybind_rows(r);
         return r;
@@ -4609,27 +4477,10 @@ void navigate(std::vector<Row>& rows, bool list) {
         it->adjust(dx);
         return;
     }
-    // (the keyboard: Enter accepts the text, keyboard_keys; A types the key picked. The Enter that accepted it does
-    // nothing more: the row it came from would open it again)
-    bool keys = s.view == View::Keyboard && !list;
-    bool confirm = keys ? settled() && pressed(face_key(0)) : confirm_pressed() && !s.typed_enter;
+    bool confirm = confirm_pressed() && !s.typed_enter;
     if (confirm && it->activate) {
         auto fn = it->activate;
         fn();
-        return;
-    }
-    if (keys && (dx || dy)) {  // (the keys as they lie on the screen, last frame: the nearest that way)
-        auto from = std::find_if(s.targets.begin(), s.targets.end(), [](const Target& t) { return t.id == s.focus; });
-        if (from == s.targets.end()) return;
-        float best = 1e30f;
-        std::string next;
-        for (const Target& t : s.targets) {
-            float x = t.center.x - from->center.x, y = t.center.y - from->center.y;
-            if (!t.enabled || (dy && y * dy <= 1) || (dx && (x * dx <= 1 || std::fabs(y) > 1))) continue;
-            float score = dy ? std::fabs(y) * 1000 + std::fabs(x) : std::fabs(x);
-            if (score < best) best = score, next = t.id;
-        }
-        if (!next.empty()) focus(next);
         return;
     }
     if (dy) {
@@ -4662,25 +4513,6 @@ void back_keys(bool* open) {
         s.swallow = true;
     }
 }
-// The keyboard's keys: a physical keyboard's text, Backspace, Ctrl+V, Enter; a controller's X deletes, Y a space, L / R
-// move the cursor, START accepts
-void keyboard_keys() {
-    ImGuiIO& io = ImGui::GetIO();
-    for (ImWchar ch : io.InputQueueCharacters) {
-        char utf8[5];
-        utf8[ImTextCharToUtf8(utf8, ch)] = 0;
-        insert(utf8);
-    }
-    if (pressed(ImGuiKey_Backspace, true) || pressed(face_key(2), true)) erase_previous();
-    if (pressed(face_key(3), true)) insert(" ");
-    if (io.KeyCtrl && pressed(ImGuiKey_V)) paste();
-    if (pressed(ImGuiKey_GamepadL1, true)) move_cursor(-1);
-    if (pressed(ImGuiKey_GamepadR1, true)) move_cursor(1);
-    if (pressed(ImGuiKey_Enter) || pressed(ImGuiKey_KeypadEnter) || pressed(ImGuiKey_GamepadStart)) {
-        s.typed_enter = true;
-        accept_keyboard();
-    }
-}
 // The picker's remembered choice picked by a controller or the keys: X (the button that saves elsewhere) or Delete
 // takes it out, as its x does
 bool picker_removable() {
@@ -4699,7 +4531,7 @@ void picker_keys(const std::vector<Row>& options) {
 }
 // X saves (not while a question or the keyboard is up), L / R the tab before / after
 void page_keys() {
-    if (confirmation() || s.view == View::Keyboard) return;
+    if (confirmation()) return;
     if (pressed(face_key(2)) && dirty() && !s.dropdown.open) s.save_request = true;
     if (s.dropdown.open || (s.view != View::Main && s.view != View::Page)) return;
     if (pressed(ImGuiKey_GamepadR1)) first_page((s.page + 1) % PAGES);
@@ -4851,7 +4683,7 @@ void picker_help(const std::vector<Row>& rows) {
 }
 // Y or H: the picked row's help, as its "?" (not while the keyboard or a question is up; in the picker, its row's)
 void help_keys(const std::vector<Row>& rows) {
-    if (s.view == View::Keyboard || confirmation() || !settled()) return;
+    if (confirmation() || !settled()) return;
     if (!pressed(face_key(3)) && !pressed(ImGuiKey_H)) return;
     if (s.dropdown.open) {  // (the picker's: its row's help over the choices)
         if (!s.dropdown.help.empty()) s.dropdown.show_help = !s.dropdown.show_help;
@@ -4912,7 +4744,7 @@ void draw_rows(std::vector<Row>& rows, bool list = false) {
     if (list || (s.view != View::Main && s.view != View::Page)) tile_run.assign(rows.size(), 0);
     std::vector<char> helps(rows.size(), 0);
     bool seals = false;
-    if (!list && !plated && s.view != View::Keyboard)
+    if (!list && !plated)
         for (size_t i = 0; i < rows.size(); i++)
             seals |= helps[i] = !rows[i].header && !rows[i].note && !rows[i].grid && !tile_run[i] && !help_text(rows[i]).empty();
     const float qw = seals ? std::min(s.m.row * .66f, font * 2.3f) : 0;
@@ -5243,15 +5075,14 @@ void draw_guides(ImDrawList* dl, float x, float y, float right, float size) {
         const char* label;
         bool on;
     };
-    const bool keys = s.view == View::Keyboard;  // (the keyboard: X deletes, Y a space, L / R move the cursor)
     const Item items[] = {{SettingsIcons::Dpad, "Move", true},
-                          {SettingsIcons::A, keys ? "Type" : "Confirm", true},
+                          {SettingsIcons::A, "Confirm", true},
                           {SettingsIcons::B, "Back", true},
-                          {SettingsIcons::X, keys ? "Delete" : picker_removable() ? "Remove" : "Save",
-                           keys || picker_removable() || (dirty() && !confirmation())},
-                          {SettingsIcons::Y, keys ? "Space" : "Help", keys || !s.dropdown.open || !s.dropdown.help.empty()},
-                          {SettingsIcons::L, "", s.view == View::Main || s.view == View::Page || keys},
-                          {SettingsIcons::R, keys ? "Cursor" : "Sections", s.view == View::Main || s.view == View::Page || keys}};
+                          {SettingsIcons::X, picker_removable() ? "Remove" : "Save",
+                           picker_removable() || (dirty() && !confirmation())},
+                          {SettingsIcons::Y, "Help", !s.dropdown.open || !s.dropdown.help.empty()},
+                          {SettingsIcons::L, "", s.view == View::Main || s.view == View::Page},
+                          {SettingsIcons::R, "Sections", s.view == View::Main || s.view == View::Page}};
     SettingsIcons::Ink ink;
     ink.plate = k.plate, ink.rim = k.edge, ink.rule = k.rule, ink.letter = k.ink;
     float text = std::floor(size * .78f), gap = size * .9f;
@@ -5281,220 +5112,101 @@ void draw_guides(ImDrawList* dl, float x, float y, float right, float size) {
     }
 }
 
-// ---------------------------------------------------------------- the chat dialog
-// What the chat button opens (as AzaharPlus's chat dialog): a sheet over the lower part of the screen with the game seen
-// above it - the chat's name and a button that goes to the next chat, X; the lines of the chat; a field to type in (a tap
-// opens the keyboard, which keeps what was typed here) and Send. The chat page of the menu is only its settings now. It is a
-// view of the menu so the keyboard, Back and the touch work as everywhere, but only this sheet shows; Back and X close the
-// menu with it. Its opacity: Chat dialog opacity (settings_chat.inc).
-std::string g_chat_draft;  // what was typed, not sent yet
-bool g_chat_fresh;         // just opened: the lines at their end
-void close_chat_dialog(bool* open) {
-    if (!g_dialog_from_button && !s.origins.empty()) {  // (opened from the menu: back to it)
-        pop();
-        return;
-    }
-    s.origins.clear();
-    s.view = View::Main;
-    close_menu(open);
-}
-// The chats the button goes through: Mixed (while it is on), the room's, General, Global, each friend
-struct DialogChat {
+// ---------------------------------------------------------------- the chat sheet
+// What the chat button opens is an Android bottom sheet (ChatSheet.java: the lines, a normal text field, Send; AzaharPlus's
+// chat dialog's way). The chat stays here: while the sheet is up, each frame gives it the lines when they change and says
+// what the player typed, asked for or tapped.
+struct SheetChat {
     int channel;
     std::string peer;
 };
-std::vector<DialogChat> dialog_chats() {
-    std::vector<DialogChat> v;
-    if (chat::bridged()) v.push_back({chat::MIXED, ""});
+// The chats the sheet's chat button goes through: Mixed (while it is on), the room's, General, Global, each friend
+std::vector<SheetChat> sheet_chats() {
+    std::vector<SheetChat> v;
+    if (chat::bridged()) v.push_back({chat::MIXED, ""}), v.push_back({chat::MIXED_ALL, ""});
     v.push_back({chat::HUB, ""});
+    v.push_back({chat::HUBCHAT, ""});
     v.push_back({chat::GENERAL, ""});
     v.push_back({chat::GLOBAL, ""});
     for (const chat::Person& p : chat::people())
         if (p.is_friend) v.push_back({chat::FRIEND, p.id});
     return v;
 }
-std::string dialog_chat_name(int channel, const std::string& peer) {
+std::string sheet_chat_name(int channel, const std::string& peer) {
     if (channel == chat::FRIEND) return std::string(cs("Friend: ", "Amigo: ")) + chat::person_name(peer);
     return chat::channel_name(channel);
 }
-bool dialog_can_say() {
-    const bool room = chat::hub_chat() && chat::hub_up(), online = chat::enabled();
-    return g_chat == chat::HUB ? room : g_chat == chat::MIXED ? room || online : online;
+bool sheet_can_say() {
+    const bool room = chat::hub_chat() && chat::hub_up(), online = chat::enabled(), hub = online && !net_hub_chat_scope().empty();
+    return g_chat == chat::HUB ? room : g_chat == chat::HUBCHAT ? hub : g_chat == chat::MIXED ? room || hub : g_chat == chat::MIXED_ALL ? room || online : online;
 }
-void touch_chat_dialog(bool* open) {
-    ImGuiViewport* vp = ImGui::GetMainViewport();
-    const Theme& look = theme();
-    const Look k = touch_look();
-    const float H = vp->WorkSize.y, W = vp->WorkSize.x;
-    s.m.H = H, s.m.f = ImGui::GetFontSize(), s.m.row = std::max(.09f * H, s.m.f * 2.4f), s.m.pad = .014f * H;
-    s.m.line = std::max(2.f, .0035f * H);
-    const float f = s.m.f, pad = s.m.pad, line = s.m.line;
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && settled()) s.armed = true;
-    {  // (Back, the Android Back key, the controller's B: the menu goes with the dialog)
-        const bool back = pressed(face_key(1)) || pressed(ImGuiKey_Escape) || pressed(ImGuiKey_AppBack);
-        const bool asked = request_back.exchange(false) | request_close.exchange(false);
-        if (asked || (back && settled())) {
-            close_chat_dialog(open);
+bool g_sheet_open = false;
+std::string g_sheet_seen;                 // (what the sheet shows now: it is given the lines again when this changes)
+std::optional<chat::Line> g_join_after;   // (a line with a room in it was tapped: the menu opens on the join page)
+void open_chat_sheet() {
+    if (g_chat < 0 || ((g_chat == chat::MIXED || g_chat == chat::MIXED_ALL) && !chat::bridged()))
+        g_chat = chat::bridged() ? chat::MIXED : chat::hub_chat() && chat::hub_up() ? chat::HUB : chat::GLOBAL;
+    g_sheet_open = true;
+    g_sheet_seen.clear();
+    app_chat_sheet_show(chat_dialog_opacity(), cs("Chat", "Chat"), cs("Type message...", "Escribe un mensaje..."), cs("Send", "Enviar"));
+}
+std::string sheet_field(std::string text) {  // (the characters the sheet's lines are apart by, out of a line's text)
+    for (char& c : text)
+        if (c == '\x1e' || c == '\x1f') c = ' ';
+    return text;
+}
+void chat_sheet_frame() {
+    if (!g_sheet_open) return;
+    if (!app_chat_sheet_open()) {
+        g_sheet_open = false;
+        return;
+    }
+    if (app_chat_sheet_take_next()) {
+        const std::vector<SheetChat> chats = sheet_chats();
+        size_t at = 0;
+        for (size_t i = 0; i < chats.size(); i++)
+            if (chats[i].channel == g_chat && chats[i].peer == g_chat_peer) at = i;
+        const SheetChat& next = chats[(at + 1) % chats.size()];
+        g_chat = next.channel, g_chat_peer = next.peer;
+        app_chat_sheet_error("");
+        g_sheet_seen.clear();
+    }
+    const std::string said = app_chat_sheet_take_send();
+    if (!said.empty()) {
+        std::string why;
+        app_chat_sheet_error(chat::say(g_chat, g_chat_peer, said, &why) ? std::string() : chat::explain(why));
+        g_sheet_seen.clear();
+    }
+    const std::vector<chat::Line> lines = chat::lines(g_chat, g_chat_peer, 60);
+    const std::string joined = app_chat_sheet_take_join();
+    if (!joined.empty()) {
+        const unsigned serial = (unsigned)std::strtoul(joined.c_str(), nullptr, 10);
+        for (const chat::Line& l : lines)
+            if (l.serial == serial) g_join_after = l;
+        if (g_join_after) {
+            app_chat_sheet_close();
+            g_sheet_open = false;
+            ui_open_settings();
             return;
         }
     }
-    cs("", "");  // (the language)
-    if (g_chat < 0 || (g_chat == chat::MIXED && !chat::bridged()))
-        g_chat = chat::bridged() ? chat::MIXED : chat::hub_chat() && chat::hub_up() ? chat::HUB : chat::GLOBAL;
-    const float sw = std::min(W * .96f, H * 2.2f), sh = H * .68f;
-    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + (W - sw) * .5f, vp->WorkPos.y + H - sh), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(sw, sh), ImGuiCond_Always);
-    ImVec4 bg = vec(look.panel);
-    bg.w = std::clamp(chat_dialog_opacity() / 100.f, .2f, 1.f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, bg);
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_Text, vec(look.text));
-    ImGui::PushStyleColor(ImGuiCol_Border, vec(look.edge));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, look.game ? 0.f : look.rounding * 2);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(pad * .5f, pad * .35f));
-    ImGui::Begin("Settings##chatdialog", nullptr, fixed_window);
-    auto* window = ImGui::GetCurrentWindow();
-    ImDrawList* dl = window->DrawList;
-    ImFont* font = ImGui::GetFont();
-    ImFont* tf = title_font();
-    const float x0 = window->Pos.x, y0 = window->Pos.y, x1 = x0 + window->Size.x, y1 = y0 + window->Size.y;
-    const float band = std::max(.1f * H, f * 2.6f), side = band * .74f, by = y0 + (band - side) * .5f + line * .5f;
-    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y0 + band), k.band);
-    dl->AddRectFilled(ImVec2(x0, y0 + band), ImVec2(x1, y0 + band + line * .7f), look.game ? RULE_RED : look.accent);
-    bool held = false;
-    std::function<void()> later;
-    // X at the right; at its left the chat's name, a tap on it goes to the next chat
-    ImRect shut(x1 - pad - side, by, x1 - pad, by + side);
-    if (touch_button("###chatshut", shut, true, &held)) later = [open]() { close_chat_dialog(open); };
-    plate(dl, shut, line, held, true);
-    cross(dl, shut.GetCenter(), side * .2f, held ? k.glow : k.ink, std::max(2.f, line * 1.5f));
-    const std::vector<DialogChat> chats = dialog_chats();
-    const std::string name = dialog_chat_name(g_chat, g_chat_peer);
-    const float tsize = std::floor(f * 1.15f);
-    shadow_text(dl, tf, tsize, ImVec2(x0 + pad * 1.5f, by + (side - tsize) * .5f), k.glow, cs("Chat", "Chat"));
-    {
-        const float tw = tf->CalcTextSizeA(tsize, FLT_MAX, 0, cs("Chat", "Chat")).x;
-        const float label_w = std::min(font->CalcTextSizeA(f, FLT_MAX, 0, name.c_str()).x + f * 2.4f, (shut.Min.x - x0) * .6f);
-        ImRect pick(shut.Min.x - pad - std::max(label_w, side * 2), by, shut.Min.x - pad, by + side);
-        if (touch_button("###chatnext", pick, chats.size() > 1, &held)) {
-            later = [chats]() {
-                size_t at = 0;
-                for (size_t i = 0; i < chats.size(); i++)
-                    if (chats[i].channel == g_chat && chats[i].peer == g_chat_peer) at = i;
-                const DialogChat& n = chats[(at + 1) % chats.size()];
-                g_chat = n.channel, g_chat_peer = n.peer;
-                g_chat_fresh = true;
-            };
-        }
-        plate(dl, pick, line, held, chats.size() > 1);
-        ImVec2 ns = font->CalcTextSizeA(f, FLT_MAX, 0, name.c_str());
-        dl->PushClipRect(pick.Min, pick.Max, true);
-        shadow_text(dl, f, ImVec2(pick.GetCenter().x - std::min(ns.x, pick.GetWidth() - f) * .5f, pick.GetCenter().y - ns.y * .5f), k.ink, name.c_str());
-        dl->PopClipRect();
-        (void)tw;
-    }
-    // the input, at the bottom: the field (a tap: the keyboard) and Send
-    const bool can = dialog_can_say();
-    const float in_h = s.m.row;
-    ImRect send(x1 - pad - std::max(side * 1.9f, f * 4.6f), y1 - pad - in_h, x1 - pad, y1 - pad);
-    ImRect field(x0 + pad, send.Min.y, send.Min.x - pad, send.Max.y);
-    const bool has = !g_chat_draft.empty();
-    if (touch_button("###chatfield", field, can, &held))
-        later = []() {
-            const int ch = g_chat;
-            (void)ch;
-            open_keyboard(cs("Say something", "Decir algo"), g_chat_draft, KB_CHAT, chat::max_text(), "",
-                          [](const std::string& typed, std::string&) {
-                              g_chat_draft = typed;  // (Send says it)
-                              return true;
-                          });
-        };
-    plate(dl, field, line * .8f, held, can);
-    {
-        const std::string shown = has ? g_chat_draft : std::string(can ? cs("Type a message...", "Escribe un mensaje...")
-                                                                       : cs("Turn on a chat in the menu to talk", "Activa un chat en el menú para hablar"));
-        ImVec2 ts = font->CalcTextSizeA(f, FLT_MAX, 0, shown.c_str());
-        dl->PushClipRect(ImVec2(field.Min.x + line, field.Min.y), ImVec2(field.Max.x - line, field.Max.y), true);
-        shadow_text(dl, f, ImVec2(field.Min.x + f * .7f, field.GetCenter().y - ts.y * .5f), has && can ? k.ink : k.dim, shown.c_str());
-        dl->PopClipRect();
-    }
-    if (touch_button("###chatsend", send, can && has, &held))
-        later = []() {
-            std::string why;
-            if (chat::say(g_chat, g_chat_peer, g_chat_draft, &why)) {
-                g_chat_draft.clear();
-                s.error.clear();
-                g_chat_fresh = true;
-            } else
-                s.error = chat::explain(why);
-        };
-    plate(dl, send, line, held, can && has);
-    {
-        const char* label = cs("Send", "Enviar");
-        ImVec2 ts = ImGui::CalcTextSize(label);
-        shadow_text(dl, f, ImVec2(send.GetCenter().x - ts.x * .5f, send.GetCenter().y - ts.y * .5f), can && has ? k.glow : look.text_off, label);
-    }
-    float list_bottom = field.Min.y - pad;
-    if (!s.error.empty()) {  // (why a line was not sent, over the field)
-        const float wrap = x1 - x0 - pad * 3, small = std::floor(f * .85f);
-        const ImVec2 es = font->CalcTextSizeA(small, FLT_MAX, wrap, s.error.c_str());
-        dl->AddText(font, small, ImVec2(x0 + pad * 1.5f, list_bottom - es.y), look.warn, s.error.c_str(), nullptr, wrap);
-        list_bottom -= es.y + pad * .5f;
-    }
-    // the lines: newest at the bottom, a finger drags the list; a line with a room shared in it, a tap on it joins
-    const ImRect list(ImVec2(x0 + pad, y0 + band + line * 2 + pad * .5f), ImVec2(x1 - pad, list_bottom));
-    const std::vector<chat::Line> lines = chat::lines(g_chat, g_chat_peer, 60);
     chat::mark_read(g_chat, g_chat_peer);
-    ImGui::SetCursorScreenPos(list.Min);
-    ImGui::BeginChild("##chatlines", list.GetSize(), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    {
-        ImDrawList* ld = ImGui::GetWindowDrawList();
-        const float wrap = list.GetWidth() - pad * 3;
-        if (lines.empty())
-            shadow_text(ld, f, ImVec2(list.Min.x + pad, list.Min.y + pad), k.dim,
-                        can ? cs("Nothing has been said yet.", "Todavía no se dijo nada.")
-                            : cs("Turn on the room chat or the online chat in the menu's Chat page.",
-                                 "Activa el chat de la sala o el chat en línea en la página Chat del menú."), wrap);
-        for (const chat::Line& l : lines) {
-            const std::string who = l.system ? std::string() : chat::who(l) + ": ", text = chat::line_text(l);
-            const ImU32 ink = l.system ? k.dim : l.mine ? k.ink : l.channel == chat::HUB ? IM_COL32(120, 200, 255, 255)
-                                                      : l.channel == chat::FRIEND ? IM_COL32(244, 150, 200, 255) : k.glow;
-            const ImVec2 at = ImGui::GetCursorScreenPos();
-            const ImVec2 ws = font->CalcTextSizeA(f, FLT_MAX, 0, who.c_str());
-            const float room_w = std::max(f * 4, wrap - ws.x);
-            const ImVec2 ts = font->CalcTextSizeA(f, FLT_MAX, room_w, text.c_str());
-            const float h = std::max(ts.y, f) + pad * .9f;
-            ld->AddText(font, f, ImVec2(at.x + pad * .5f, at.y), ink, who.c_str());
-            ld->AddText(font, f, ImVec2(at.x + pad * .5f + ws.x, at.y), l.system ? k.dim : k.ink, text.c_str(), nullptr, room_w);
-            ImGui::Dummy(ImVec2(list.GetWidth() - pad, h));
-            if (l.share == chat::SHARE_ROOM && !l.mine) {
-                ImRect join(ImVec2(at.x + pad * .5f, at.y + h - pad * .4f), ImVec2(at.x + pad * .5f + f * 9, at.y + h - pad * .4f + in_h * .7f));
-                bool jheld = false;
-                if (touch_button(("###chatjoin" + std::to_string(l.serial)).c_str(), join, true, &jheld)) {
-                    const chat::Line copy = l;
-                    later = [copy]() { chat_use_share(copy); };
-                }
-                plate(ld, join, line * .8f, jheld, true);
-                const char* jl = cs("Join this room", "Entrar a esta sala");
-                shadow_text(ld, f * .85f, ImVec2(join.Min.x + f * .5f, join.GetCenter().y - f * .45f), k.glow, jl);
-                ImGui::Dummy(ImVec2(1, in_h * .7f + pad * .4f));
-            }
-        }
-        if (g_chat_fresh || lines.size() != s.chat_dialog_lines) {  // (a new line, or the chat just opened: the end)
-            ImGui::SetScrollHereY(1.f);
-            s.chat_dialog_lines = lines.size();
-            g_chat_fresh = false;
-        }
-        finger_scroll(ImGui::GetCurrentWindow());
-        scroll_mark(ImGui::GetCurrentWindow());
+    const bool can = sheet_can_say();
+    const std::string seen = std::to_string(g_chat) + g_chat_peer + (can ? "1" : "0") + std::to_string(lines.size()) + "/" +
+                             std::to_string(lines.empty() ? 0u : lines.back().serial);
+    if (seen == g_sheet_seen) return;
+    g_sheet_seen = seen;
+    std::string snapshot;
+    for (const chat::Line& l : lines) {
+        const char kind = l.system ? '0' : l.mine ? '1' : l.channel == chat::HUB ? '2' : l.channel == chat::FRIEND ? '4' : l.channel == chat::HUBCHAT ? '5' : '3';
+        if (!snapshot.empty()) snapshot += '\x1e';
+        snapshot += kind;
+        snapshot += '\x1f' + sheet_field(chat::who(l)) + '\x1f' + sheet_field(chat::line_text(l)) + '\x1f';
+        if (l.share == chat::SHARE_ROOM && !l.mine) snapshot += std::to_string(l.serial);
     }
-    ImGui::EndChild();
-    ImGui::End();
-    ImGui::PopStyleVar(4);
-    ImGui::PopStyleColor(4);
-    if (later) later();
+    app_chat_sheet_update(sheet_chat_name(g_chat, g_chat_peer), snapshot,
+                          can ? cs("Type message...", "Escribe un mensaje...")
+                              : cs("Turn on a chat in the menu to talk", "Activa un chat en el menú para hablar"));
 }
 
 // The menu: nearly the whole screen - a header with the title, Back (in a submenu or a question), Save and Close; the
@@ -5539,7 +5251,6 @@ void touch_panel(bool* open) {
     }
     page_keys();
     s.typed_enter = false;
-    if (s.view == View::Keyboard && !s.dropdown.open) keyboard_keys();
     auto rows = rows_for_view(open);
     reopen_picker(rows);
     picker_help(rows);
@@ -5615,7 +5326,6 @@ void touch_panel(bool* open) {
                           : s.view == View::Keybinds ? tr("Keybinds")
                           : s.view == View::Chat     ? std::string(cs("Chat", "Chat"))
                           : s.view == View::Friends  ? std::string(cs("Friends", "Amigos"))
-                          : s.view == View::Keyboard ? s.keyboard.title
                                                      : "";
         auto sized = [](float full, float q) { return q < 1 ? std::floor(full * q) : full; };
         auto name_w = [&](float q) { return font->CalcTextSizeA(sized(f, q), FLT_MAX, 0, sub.c_str()).x; };
@@ -5710,32 +5420,6 @@ void touch_panel(bool* open) {
                s.view == View::PadMap || s.view == View::Profiles || s.view == View::ProfileSlot ||
                s.view == View::Keybinds || s.view == View::Chat || s.view == View::Friends || s.view == View::Verify) {  // (the whole width)
         float y = top + error_text(top, left, end - left);
-        list_rect = ImRect(left, y, end, bottom);
-    } else if (s.view == View::Keyboard) {  // (the text typed so far, what it takes beside it, the keys under it)
-        const Keyboard& kb = s.keyboard;
-        ImRect field(left, top, end, top + f * 2.2f);
-        dl->AddRectFilled(field.Min, field.Max, IM_COL32(14, 10, 8, 235));
-        dl->AddRect(field.Min, field.Max, k.rule, 0.f, line * .7f);
-        float small = std::floor(f * .8f);
-        ImVec2 hs = font->CalcTextSizeA(small, FLT_MAX, 0, kb.hint.c_str());
-        float hint_w = kb.hint.empty() ? 0 : std::min(hs.x + f * 1.6f, field.GetWidth() * .45f);  // (wrapped at hint_w - f)
-        std::string text = kb.buffer;
-        text.insert(kb.cursor, "|");
-        float room = field.GetWidth() - f * 1.2f - hint_w;
-        float upto = ImGui::CalcTextSize(text.c_str(), text.c_str() + kb.cursor + 1).x;
-        float tx = field.Min.x + f * .6f - std::max(0.f, upto - room);  // (a long text: the part at the cursor shows)
-        ImVec2 ts = ImGui::CalcTextSize(text.c_str());
-        dl->PushClipRect(ImVec2(field.Min.x + line, field.Min.y), ImVec2(field.Max.x - line - hint_w, field.Max.y), true);
-        shadow_text(dl, f, ImVec2(tx, field.GetCenter().y - ts.y * .5f), k.ink, text.c_str());
-        dl->PopClipRect();
-        if (hint_w > 0) {  // (what the text takes: a nickname's letters, an address's form)
-            float hx = field.Max.x - hint_w;
-            dl->AddLine(ImVec2(hx, field.Min.y + pad * .6f), ImVec2(hx, field.Max.y - pad * .6f), fade(k.rule, .35f), std::max(1.f, line * .4f));
-            dl->AddText(font, small, ImVec2(hx + f * .5f, field.GetCenter().y - font->CalcTextSizeA(small, FLT_MAX, hint_w - f, kb.hint.c_str()).y * .5f),
-                        k.dim, kb.hint.c_str(), nullptr, hint_w - f);
-        }
-        float y = field.Max.y + pad * .8f;
-        y += error_text(y, left, end - left);
         list_rect = ImRect(left, y, end, bottom);
     } else if (dialog) {  // (the question, its answers in a column under it)
         float cw = std::min((end - left) * .6f, f * 24), cx = (left + end) * .5f;
@@ -6219,13 +5903,15 @@ void settings_panel(bool* open) {
     net_poll();  // (the room's events, open or not: the chat and the notices)
     chat_app_init();
     chat_app_frame();  // (the port's chat: its state; over the game its button and last lines, chat_app.cpp)
+    text_field_frame();  // (what was typed in the Android text field, if it was asked for)
+    if (g_chat_asked.exchange(false)) open_chat_sheet();  // (the chat button over the game: settings_panel_open_chat)
+    chat_sheet_frame();  // (its sheet: the lines to it, what was typed in it to the chat)
     if (!*open) {
         controls_capture(false, false);  // (no key chosen with the menu closed)
         if (s.editing) {  // (closed from outside)
             s.editing = false;
             closed_now = true;
         }
-        text_input(0);
         is_dirty = false;
         if (perfstats_visible()) {
             ImGuiIO& io = ImGui::GetIO();
@@ -6262,11 +5948,10 @@ void settings_panel(bool* open) {
         request_back = false;
         request_close = false;
     }
-    if (g_chat_asked.exchange(false)) {  // (the chat button over the game: settings_panel_open_chat)
-        first_page(3);  // (Multiplayer: page_ids)
-        g_dialog_from_button = true;
-        push(View::ChatDialog, "");
-        g_chat_fresh = true;
+    if (g_join_after) {  // (a room shared in the chat, tapped in the sheet: the menu is on the join page)
+        const chat::Line line = *g_join_after;
+        g_join_after.reset();
+        chat_use_share(line);
     }
     // the letters' size: from the screen's height, and the menu's own size
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -6276,11 +5961,9 @@ void settings_panel(bool* open) {
     float px = std::clamp(.034f * H * s.draft.menu_scale / 100.f, .016f * H, .07f * H);
     ImGui::PushFont(nullptr, px / std::max(.01f, style.FontScaleMain * style.FontScaleDpi));
     card_input();
-    if (s.view == View::ChatDialog) touch_chat_dialog(open);  // (the chat button's dialog: a sheet, not the menu)
-    else touch_panel(open);
+    touch_panel(open);
     ImGui::PopFont();
     // (typed text while the keyboard is up, the phone's own keyboard only when asked for; the room's lines: seen)
-    text_input(*open && s.view == View::Keyboard ? std::max(1, g_text_input) : 0);
     if (!net_lines().empty()) s.seen_line = net_lines().back().serial;
     is_dirty = *open && (dirty() || confirmation());
     if (!*open) {

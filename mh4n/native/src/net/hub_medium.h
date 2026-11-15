@@ -54,6 +54,8 @@ struct MediumStatus {
     bool hosting = false;
     bool joining = false;
     bool linked = false;   ///< this console is a player of a hub
+    bool in_hub = false;   ///< this console hosts a hub or plays on one: hub_mac is its id, the same on every console in it
+    rooms::MacAddress hub_mac{};  ///< the hub host's MAC (this console's own when it hosts)
     int players = 0;       ///< the links of a hosted hub
     std::vector<HubView> hubs;
     std::vector<ServerState> servers;

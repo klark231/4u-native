@@ -31,13 +31,14 @@
 
 namespace chat {
 
-enum Channel { GLOBAL, GENERAL, HUB, FRIEND, CHANNELS };
+enum Channel { GLOBAL, GENERAL, HUB, HUBCHAT, FRIEND, CHANNELS };  // (HUB: the room's chat; HUBCHAT: the chat of the hub this device is in)
 enum Status { OFF, CONNECTING, ONLINE, NO_RELAY, UNAVAILABLE };
 enum Share { SHARE_NONE, SHARE_KEY, SHARE_ROOM };  // MHGU: hub server + matchmaking key; MH4U: room address + password
 enum Overlay { OVERLAY_OFF, OVERLAY_HUB_FRIENDS, OVERLAY_ALL };
-// A view of the chat, not a chat of its own (nothing is kept under it): the room's lines and Global's in one list, and a
-// line said to both, while Play online with is Mixed (Port::bridge). lines(), unread(), mark_read() and say() take it.
-constexpr int MIXED = 100;
+// Views of the chat, not chats of their own (nothing is kept under them), while Play online with is Mixed (Port::bridge):
+// MIXED is the room's lines and the hub's in one list, and a line said goes to both; MIXED_ALL adds Global to them (what is
+// said there is not passed on to the others: only said, and read). lines(), unread(), mark_read() and say() take them.
+constexpr int MIXED = 100, MIXED_ALL = 101;
 
 struct Line {
     unsigned serial = 0;     // goes up with each line, in every chat
@@ -73,7 +74,8 @@ struct Port {
     std::function<bool(std::string *label)> hub_up;
     std::function<bool(const std::string &text)> hub_send;
     std::function<std::string()> default_name;  // the hunter's name, or the room nickname
-    std::function<bool()> bridge;               // Mixed: the room and the online chat as one (empty / false: apart, as MHGU's)
+    std::function<bool()> bridge;               // Mixed: the room and the hub's chat as one (empty / false: apart, as MHGU's)
+    std::function<std::string()> hub_scope;     // what names the hub this device is in, for the Hub chat ("": in none, or no such chat)
     std::function<void(const char *)> log;
 };
 
@@ -100,6 +102,12 @@ int overlay();                    // Overlay: which lines show over the game
 void set_overlay(int o);
 bool bubble(float *x, float *y, float *size);  // the chat button's place (fractions) and size (1: its own); false: none saved
 void set_bubble(float x, float y, float size);
+// The overlay's look, whole numbers by key: "textsize" (14), "lines" (8), "shadowr" (2), "shadowx" (1), "shadowy" (1), "bg" (% of
+// black behind the lines, 40), "buttonop" (% of the chat button and its count, 100), "fade" (seconds a line stays before it
+// fades, 0: it never fades, 10). A key never set gives def. reset_look puts them all back.
+int look(const char *key, int def);
+void set_look(const char *key, int value);
+void reset_look();
 bool bubble_shown();
 void set_bubble_shown(bool on);
 bool flag(const std::string &name);  // the port's own marks kept in chat.txt (a notice seen...)
@@ -111,9 +119,10 @@ int online_count();               // players whose presence came in the last min
 std::string my_code();            // XXXX-XXXX-XXXX
 std::string my_key();             // hex
 bool hub_up(std::string *label = nullptr);
-// Mixed (Port::bridge): the room's chat and the online chat's Global are read and said as one (MIXED), and what the others
-// say in Global passes on into the room, one line each as "Name (MH4U): text", the room's chat taking it as a line of this
-// device's nickname (a room's chat carries no other name). Nothing of the room goes out to Global but this device's own lines.
+// Mixed (Port::bridge): the room's chat and the Hub chat (the online chat's, only for the players of the hub this device is
+// in: a tag only they ask the relays for) are read and said as one (MIXED), and what the others say in one passes on into the
+// other, one line each as "Name (Hub): text" or "Name (Room): text", a line of this device's own nickname there (a chat
+// carries no other name). Global and General are never passed on.
 bool bridged();
 
 // the lines of a chat (FRIEND: with peer), the last max

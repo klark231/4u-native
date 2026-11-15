@@ -668,6 +668,13 @@ HubStatus Client::GetHubStatus() const {
     out.joining = st.joining;
     out.linked = st.linked;
     out.players = st.players;
+    if (st.in_hub) {
+        static const char* const kHex = "0123456789abcdef";
+        for (const u8 b : st.hub_mac) {
+            out.hub_id.push_back(kHex[b >> 4]);
+            out.hub_id.push_back(kHex[b & 15]);
+        }
+    }
     for (const auto& sv : st.servers) {
         out.servers.push_back({sv.server.Text(), sv.listed, sv.hosting, sv.problem});
     }
