@@ -49,6 +49,7 @@ bool wanted() {  // (the online chat on, or the hub's chat on and a hub up)
 }
 bool counts(int channel) {
     int o = overlay();
+    if (o != OVERLAY_OFF && bridged() && (channel == HUB || channel == GLOBAL)) return true;  // (Mixed: the room's and Global's)
     return o == OVERLAY_ALL || (o == OVERLAY_HUB_FRIENDS && (channel == HUB || channel == FRIEND));
 }
 ImU32 ink(int c) {
@@ -59,7 +60,6 @@ ImU32 ink(int c) {
     default: return IM_COL32(244, 150, 200, 255);
     }
 }
-std::string mark(int c) { return c == FRIEND ? std::string(t("Friend", "Amigo")) : c == GENERAL ? std::string(t("General", "General")) : channel_name(c); }
 ImU32 faded(ImU32 c, float a) { return (c & 0x00ffffffu) | ((ImU32)(((c >> 24) & 0xff) * a) << 24); }
 }  // namespace
 
@@ -76,7 +76,7 @@ bool overlay_frame() {
     const bool menu = menu_open();
     if (last != g_seen_serial) {
         for (const Line &l : since(g_seen_serial))
-            if (!l.mine && counts(l.channel) && !menu) g_shown.push_back({l, now});
+            if (counts(l.channel) && !menu) g_shown.push_back({l, now});  // (yours too: as "You")
         g_seen_serial = last;
         if (g_shown.size() > 4) g_shown.erase(g_shown.begin(), g_shown.end() - 4);
     }
@@ -130,7 +130,7 @@ void overlay_draw(float w, float h) {
     if (x + wrap + 2 * pad > w) x = std::max(4.f, bx - br - 8 * scale - wrap - 2 * pad);
     for (const Shown &s : g_shown) {
         const float age = (float)(now - s.at), a = std::clamp(std::min(age / .15f, ((float)SHOWN - age) / .6f), 0.f, 1.f);
-        const std::string who = s.line.system ? std::string() : s.line.name + ": ", tag = mark(s.line.channel) + "  ";
+        const std::string who = s.line.system ? std::string() : chat::who(s.line) + ": ", tag;  // (who: You, Name (Room), Name (MH4U))
         const std::string text = line_text(s.line);
         const ImVec2 ms = font->CalcTextSizeA(fs * .8f, FLT_MAX, 0, tag.c_str()), ws = font->CalcTextSizeA(fs, FLT_MAX, 0, who.c_str());
         const ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, std::max(fs * 4, wrap - ws.x - ms.x), text.c_str());

@@ -13,6 +13,7 @@ inline const char *t(const char *en, const char *es) { return spanish() ? es : e
 
 std::string explain(const std::string &coded);  // a reason from say(), add_friend()...: a sentence ("" stays "")
 std::string line_text(const Line &l);           // a line's text as shown (the chat's own lines, a share in words)
+std::string who(const Line &l);                // who said it, as shown: You, "Name (Room)", "Name (MH4U)" / "Name (MHGU)"
 std::string channel_name(int channel);          // Global, General (MHGU), Hub / Room, Friends
 std::string channel_help(int channel);          // who reads it
 std::string status_text(Status s, int up, int total);  // the online chat's

@@ -50,6 +50,22 @@ LobbyState& lobby_state() {
     return *state;
 }
 
+std::vector<std::string> SplitServers(const std::string& text) {
+    std::vector<std::string> words;
+    std::string cur;
+    for (const char ch : text + " ") {
+        if (ch == ' ' || ch == ',' || ch == ';' || ch == '\t' || ch == '\n' || ch == '\r') {
+            if (!cur.empty()) words.push_back(cur);
+            cur.clear();
+        } else {
+            cur += ch;
+        }
+    }
+    return words;
+}
+bool IsOff(const std::vector<std::string>& words) {
+    return words.size() == 1 && !strcasecmp(words[0].c_str(), "off");
+}
 }  // namespace
 
 void net_poll() {
@@ -307,19 +323,73 @@ bool net_say(const std::string& text) {
     return true;
 }
 
-void net_lobby_fetch(const std::string& url) {
+// ---- the lobbies (Citra Web API URLs): a list in [Network] LobbyUrls, the URLs apart by spaces; empty or absent the two
+// that come with the app, "off" none; up to 8. A file of the previous build has the one [Network] Lobby (empty: the default,
+// "Off": none, else that one): read as the list it made.
+namespace {
+const char* const kDefaultLobbies = "http://88.198.47.46:5000 http://3ds.mgn.pub:3000";
+}
+std::vector<std::string> net_lobby_list() {
+    const std::string list = app_setting("Network", "LobbyUrls", "\x01");
+    std::vector<std::string> words;
+    if (list != "\x01") {
+        words = SplitServers(list);
+        if (words.empty()) words = SplitServers(kDefaultLobbies);
+        else if (IsOff(words)) words.clear();
+        return words;
+    }
+    const std::string old = app_setting("Network", "Lobby", "");
+    words = SplitServers(old);
+    if (words.empty()) return SplitServers(kDefaultLobbies);
+    if (IsOff(words)) return {};
+    return words;
+}
+bool net_lobby_list_set(const std::vector<std::string>& list) {
+    if (list.size() > 8) return false;
+    std::string text;
+    for (const std::string& one : list) text += (text.empty() ? "" : " ") + one;
+    if (text.empty()) text = "off";
+    else if (!strcasecmp(text.c_str(), kDefaultLobbies)) text.clear();
+    app_setting_set("Network", "LobbyUrls", text);
+    app_setting_set("Network", "Lobby", "");  // (the previous build's one: the list replaces it)
+    return true;
+}
+std::string net_lobby_urls_text() {
+    std::string text;
+    for (const std::string& one : net_lobby_list()) text += (text.empty() ? "" : " ") + one;
+    return text;
+}
+std::vector<std::string> net_lobby_default_list() { return SplitServers(kDefaultLobbies); }
+
+// The rooms of every lobby in `urls` (apart by spaces), as one list: a room two lobbies list is there once
+void net_lobby_fetch(const std::string& urls) {
     LobbyState& state = lobby_state();
     {
         std::lock_guard lock(state.mutex);
         if (state.lobby.busy) return;
         state.lobby.busy = true;
         state.lobby.done = false;
-        state.lobby.url = url;
+        state.lobby.url = urls;
     }
-    std::thread([url, &state] {
-        rooms::LobbyList list = rooms::FetchLobby(url, rooms::kMh4uUsa, 6000);
+    std::thread([urls, &state] {
+        rooms::LobbyList merged;
+        for (const std::string& url : SplitServers(urls)) {
+            rooms::LobbyList one = rooms::FetchLobby(url, rooms::kMh4uUsa, 6000);
+            if (!one.ok) {
+                if (merged.error.empty()) merged.error = one.error;
+                continue;
+            }
+            merged.ok = true;
+            for (rooms::LobbyRoom& room : one.rooms) {
+                bool twice = false;
+                for (const rooms::LobbyRoom& have : merged.rooms) twice |= have.address == room.address && have.port == room.port;
+                if (!twice) merged.rooms.push_back(std::move(room));
+            }
+        }
+        std::stable_sort(merged.rooms.begin(), merged.rooms.end(),
+                         [](const rooms::LobbyRoom& a, const rooms::LobbyRoom& b) { return a.preferred && !b.preferred; });
         std::lock_guard lock(state.mutex);
-        state.lobby.list = std::move(list);
+        state.lobby.list = std::move(merged);
         state.lobby.busy = false;
         state.lobby.done = true;
     }).detach();
@@ -344,22 +414,6 @@ HubCheckState& hub_check_state() {
 // The hub servers, one text in [Network] HubServers (the servers apart by spaces or commas; empty: the default server,
 // "off": none). A value that is not in the file is "\x01" here, to tell it from an empty one.
 const char* const kAbsent = "\x01";
-std::vector<std::string> SplitServers(const std::string& text) {
-    std::vector<std::string> words;
-    std::string cur;
-    for (const char ch : text + " ") {
-        if (ch == ' ' || ch == ',' || ch == ';' || ch == '\t' || ch == '\n' || ch == '\r') {
-            if (!cur.empty()) words.push_back(cur);
-            cur.clear();
-        } else {
-            cur += ch;
-        }
-    }
-    return words;
-}
-bool IsOff(const std::vector<std::string>& words) {
-    return words.size() == 1 && !strcasecmp(words[0].c_str(), "off");
-}
 // The list as the file has it. A file of the previous build has two fields instead (HubServer1: empty the default, "off"
 // none; HubServer2: more servers): read as the one list they made.
 std::vector<std::string> HubListStored() {

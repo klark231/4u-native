@@ -2,6 +2,20 @@
 
 [Español más abajo](#español)
 
+## Unreleased
+
+- **Multiplayer, laid out as MHGU's Network tab:** *Local play and hubs* (**Host port (UDP)**, **Search hosts**, **Internet hubs**
+  with **Hub servers**, **Matchmaking key**, **Check hub server**), *Play online with* (**This app's hubs**, **Citra Room**,
+  **Mixed**) and **Citra Room** (its **Citra Nickname**, **Citra Room Browser**, server, password, and **Citra Web API URLs**: up to 8,
+  two come with the app). Hub servers: up to 8, with Add and Remove.
+- **Search hosts** (a VPN's hosts) are asked too by *Search this Wi-Fi*.
+- **Chat:** the chat button opens a chat dialog over the game (AzaharPlus's): the lines, a field and Send, with **Chat dialog opacity**
+  in the Chat page. With *Play online with* **Mixed** there is a **Mixed** chat: what you say goes to the room and to Global, and
+  what the others say in Global passes into the room (as "Name (MH4U): text" under your nickname). Others show as "Name (Room)",
+  "Name (MH4U)" or "Name (MHGU)"; your own lines as "You".
+- **Touch layout: Adaptive or Traditional** (Controls): Traditional is the emulator-style layout with its own list of buttons
+  shown or hidden (all shown at first), a **C-stick**, **Auto run on the joystick** (off at first) and **Camera swipe** (off at first).
+
 ## 1.0
 
 Your code library stays valid: there's no need to build it again.

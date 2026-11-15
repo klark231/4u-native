@@ -50,6 +50,7 @@ void chat_app_init() {
     };
     p.hub_send = [](const std::string& text) { return net_say(text); };  // (its line comes back through net_rooms.cpp)
     p.default_name = []() { return app_setting("Network", "Nick"); };
+    p.bridge = []() { return net_play_with() == PLAY_MIXED; };  // (Mixed: the room's chat and the online chat as one)
     p.log = chat_log;
     chat::init(p);
     chat::OverlayPort o;

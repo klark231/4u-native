@@ -143,6 +143,11 @@ struct State {
     std::atomic<bool> run{false};
     bool hub_was = false;
     std::string hub_label;
+    // Mixed: the last Global line looked at for the room, when one last went in (a second apart), and what went in (their
+    // echoes in the room are not shown: hub_line)
+    unsigned bridged_to = 0;
+    int64_t fwd_sec = 0;
+    std::deque<std::string> fwd;
 };
 State &g = *new State;  // (never destroyed: the relays' thread may still run as the process ends, and a joinable thread's destructor aborts)
 
@@ -682,6 +687,47 @@ std::string game() {
     std::lock_guard<std::mutex> l(g.mu);
     return g.port.game;
 }
+bool bridged() {
+    std::function<bool()> b;
+    {
+        std::lock_guard<std::mutex> l(g.mu);
+        b = g.port.bridge;
+    }
+    return b && b();
+}
+// Mixed: the next line of Global that is not this device's goes into the room, at most one a second (the room's chat is
+// not made for a flood). History is not passed on: only what comes after Mixed is on and the room is up.
+static void bridge_tick() {
+    std::function<bool(const std::string &)> send;
+    std::string out;
+    {
+        std::lock_guard<std::mutex> l(g.mu);
+        const bool on = g.inited && g.hub && g.hub_was && g.port.hub_send && g.port.bridge && g.port.bridge();
+        if (!on) {
+            g.bridged_to = g.serial;
+            return;
+        }
+        if (unix_now() == g.fwd_sec) return;
+        const Line *next = nullptr;
+        for (const Line &x : g.chans[GLOBAL])
+            if (x.serial > g.bridged_to) {
+                next = &x;
+                break;
+            }
+        if (!next) return;
+        g.bridged_to = next->serial;
+        if (next->mine || next->system || next->share != SHARE_NONE || next->text.empty()) return;
+        std::string tag = next->game == "mh4u" ? " (MH4U)" : next->game == "mhgu" ? " (MHGU)" : "";
+        out = clean(next->name + tag + ": " + next->text, MAX_TEXT);
+        for (const Line &y : g.chans[HUB])  // (another device in the room passed it on already)
+            if (y.text == out) return;
+        g.fwd.push_back(out);
+        if (g.fwd.size() > 8) g.fwd.pop_front();
+        g.fwd_sec = unix_now();
+        send = g.port.hub_send;
+    }
+    if (send && !out.empty()) send(out);
+}
 void tick() {
     std::string label;
     bool up;
@@ -696,6 +742,7 @@ void tick() {
         }
         g.hub_label = label;
     }
+    bridge_tick();
 }
 bool enabled() { std::lock_guard<std::mutex> l(g.mu); return g.enabled; }
 void set_enabled(bool on) {
@@ -834,6 +881,19 @@ bool hub_up(std::string *label) {
 
 std::vector<Line> lines(int channel, const std::string &peer, size_t max) {
     std::lock_guard<std::mutex> l(g.mu);
+    if (channel == MIXED) {  // (the room's and Global's by when they came; a line of yours said to both: once)
+        std::vector<Line> all;
+        for (const Line &x : g.chans[HUB]) {
+            bool twin = false;
+            if (x.mine)
+                for (const Line &y : g.chans[GLOBAL]) twin |= y.mine && y.text == x.text && std::llabs(y.at - x.at) <= 5;
+            if (!twin) all.push_back(x);
+        }
+        for (const Line &x : g.chans[GLOBAL]) all.push_back(x);
+        std::sort(all.begin(), all.end(), [](const Line &a, const Line &b) { return a.serial < b.serial; });
+        if (all.size() > max) all.erase(all.begin(), all.end() - (long)max);
+        return all;
+    }
     const std::deque<Line> *d = nullptr;
     if (channel == FRIEND) {
         auto it = g.direct.find(peer);
@@ -854,6 +914,7 @@ std::vector<Line> since(unsigned serial) {
 }
 unsigned last_serial() { std::lock_guard<std::mutex> l(g.mu); return g.serial; }
 int unread(int channel, const std::string &peer) {
+    if (channel == MIXED) return unread(HUB, peer) + unread(GLOBAL, peer);
     std::lock_guard<std::mutex> l(g.mu);
     int n = 0;
     if (channel == FRIEND) {
@@ -872,6 +933,11 @@ int unread_total() {
     return n;
 }
 void mark_read(int channel, const std::string &peer) {
+    if (channel == MIXED) {
+        mark_read(HUB, peer);
+        mark_read(GLOBAL, peer);
+        return;
+    }
     std::lock_guard<std::mutex> l(g.mu);
     if (channel == FRIEND) g.read_direct[peer] = g.serial;
     else if (channel >= 0 && channel < 3) g.read[channel] = g.serial;
@@ -916,6 +982,13 @@ bool share(int channel, const std::string &peer, int kind, const std::string &a,
     return true;
 }
 bool say(int channel, const std::string &peer, const std::string &typed, std::string *why) {
+    if (channel == MIXED) {  // (both: sent if either took it; the reason of the online chat's when neither did)
+        std::string room_why, global_why;
+        const bool room = say(HUB, peer, typed, &room_why), global = say(GLOBAL, peer, typed, &global_why);
+        if (room || global) return true;
+        if (why) *why = global_why.empty() ? room_why : global_why;
+        return false;
+    }
     std::string text = clean(typed, MAX_TEXT);
     if (text.empty()) return false;
     std::unique_lock<std::mutex> l(g.mu);
@@ -1083,6 +1156,13 @@ void hub_line(const std::string &from, const std::string &n, const std::string &
     if (!g.hub) return;  // (the hub's chat off: its lines are not the chat's)
     std::string text = clean(typed, 500), who = clean(n, MAX_NAME);
     if (text.empty()) return;
+    if (mine) {  // (a line this device passed on from Global: not its own line in the room)
+        auto it = std::find(g.fwd.begin(), g.fwd.end(), text);
+        if (it != g.fwd.end()) {
+            g.fwd.erase(it);
+            return;
+        }
+    }
     if (!mine && !admit_locked(from, who, HUB, "")) return;
     Line ln;
     ln.channel = HUB, ln.from = mine ? g.key : from, ln.name = who.empty() ? "?" : who, ln.text = text, ln.mine = mine;

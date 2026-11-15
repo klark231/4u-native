@@ -46,7 +46,11 @@ void touch_set_bottom_default(bool shown);
 void touch_set_one_screen(bool on);
 // The controls' settings (the settings panel's Controls tab), by their keys in touch_layout.txt: "controls" (auto, on,
 // off), "opacity" (0.20 .. 1.00), "camera_speed" (0.20 .. 5.00), "attack_style" (0 the pill, 1 two buttons, 2 the corner
-// band) and "show_<button>" (1 shown, 0 hidden: show_attacks, show_dodge, ...). Empty for a key that isn't one.
+// band) and "show_<button>" (1 shown, 0 hidden: show_attacks, show_dodge, ...). Traditional (the emulator-style layout):
+// "swipe_camera" (1: a drag on the picture turns the camera; 0 at first, the C-stick does), "auto_run" (1: the thumb past the
+// movement stick's rim runs; 0 at first, the R button does) and "trad_show_<control>" (1 shown, 0 hidden, of the layout in
+// use when it is that kind: trad_show_emu_a, emu_b, emu_x, emu_y, emu_l, emu_r, emu_zl, emu_zr, emu_start, emu_select,
+// emu_dpad, emu_cstick, stick). Empty for a key that isn't one.
 std::string touch_setting(const std::string& key);
 // Sets one at once and saves touch_layout.txt (a value out of its range is brought into it).
 void touch_set_setting(const std::string& key, const std::string& value);
@@ -61,6 +65,7 @@ void touch_edit_begin();
 // in use saved into slot n (it is that profile from then on), a new layout of a kind in slot n and in use, slot n emptied
 // (not the one in use). false: it couldn't be (no such file, the save folder not reached, the editor open). The MHGU
 // port's the same
+int touch_layout_kind();  // the layout in use's kind (0 the port's own: Adaptive, 1 emulator-style: Traditional), cheap
 int touch_profile_active();
 int touch_profile_kind(int n);
 bool touch_profile_use(int n);

@@ -172,6 +172,8 @@ struct Settings {
     float camera = 1.0f;   // the camera's turn for a drag (1: about 90 degrees a screen height)
     float opacity = .8f;   // of the controls, .2 .. 1
     bool show[TB_COUNT];
+    bool swipe_cam = false;  // Traditional (the emulator-style layout): a drag on the picture turns the camera (off: the C-stick does)
+    bool auto_run = false;   // Traditional: the thumb past the movement stick's rim runs (R held); off: only the R button runs
     bool debug = false;    // (debug 1: what each finger lands on, in the log)
 };
 Settings g_set;
@@ -249,6 +251,7 @@ enum Ctl {
     // nothing else, as an emulator's pad on the screen; the stick, the settings, touch screen, town and Lock-on buttons,
     // the item bar's arrows and the combined buttons are the same controls in both kinds). The MHGU port's the same
     C_EA, C_EB, C_EX, C_EY, C_EL, C_ER, C_EZL, C_EZR, C_ESTART, C_ESELECT, C_EDPAD,
+    C_CSTICK,  // (the emulator-style layout's right stick: the game's C-stick, laid out like the others)
     C_STICK,                                                                               // (laid out: touch_layout.txt)
     C_ML, C_MR, C_MSELECT,  // (the menu pad's: its page tabs above it, as the shoulders, and SELECT below it; placed from it)
     C_COUNT
@@ -360,6 +363,7 @@ const Def DEFS[C_COUNT] = {
     {"emu_start", "START", I_MENU, "START", BTN_START, true, .42f, .70f, .046f},
     {"emu_select", "SELECT", I_SELECT, "SELECT", BTN_SELECT, false, .42f, .70f, .046f},
     {"emu_dpad", "D-pad", I_DPAD, "", 0, false, .50f, .17f, .105f},
+    {"emu_cstick", "C-stick", I_STICK, "", 0, true, .56f, .22f, .095f},
     {"stick", "Movement", I_STICK, "", 0, false, .29f, .27f, .115f},
     // the menu pad's (x, y unused: place_raw): the shoulders as tabs (the item box's pages, the shops'), SELECT
     {"ml", "L", I_LETTER, "L", BTN_L, true, 0, 0, .040f},
@@ -425,26 +429,26 @@ bool mpad_menu(bool menu) { return g_town_edit || (menu && !(g_game.front_end ==
 // A control the emulator-style layout's editor can hide (Layout.off): any of its own but the settings button, the way back
 // to the settings (the settings' Buttons on the screen hide the port's own layout's: its editor has no Hide for those)
 bool hideable(int i) {
-    return g_kind == KIND_EMU && i != C_SETTINGS && (emu_ctl(i) || i == C_STICK || i == C_LOCKON || i == C_SCREEN || i == C_TOWN || is_combo(i));
+    return g_kind == KIND_EMU && i != C_SETTINGS && (emu_ctl(i) || i == C_STICK || i == C_CSTICK || i == C_LOCKON || i == C_SCREEN || i == C_TOWN || is_combo(i));
 }
 // The emulator-style layout: its own buttons, the stick, the settings, touch screen, town and Lock-on buttons, the item
 // bar's arrows and the combined buttons, each but the settings button unless its editor hid it (the editor shows those
 // too, faded, for its Show); in a menu of the game's nothing changes (its d-pad is always there: no menu pad)
 bool emu_mode(int i, bool menu) {
     if (i != C_SETTINGS && (g_off >> i & 1) && !g_town_edit) return false;
-    if (emu_ctl(i) || i == C_SETTINGS || i == C_STICK) return true;
+    if (emu_ctl(i) || i == C_SETTINGS || i == C_STICK || i == C_CSTICK) return true;
     if (i == C_TOWN) return !menu && (g_town_edit || town_available());
     if (i == C_SCREEN) return show(TB_SCREEN);
     if (i == C_ITEML || i == C_ITEMR)
         return show(TB_ITEMARROWS) && (g_town_edit || (!menu && g_game.place == 2 && g_game.item_bar_shown != 0));
-    if (i == C_RUNLOCK) return g_town_edit && show(TB_STICKRUN);
+    if (i == C_RUNLOCK) return g_town_edit && g_set.auto_run;  // (Traditional: the stick runs only when Auto run is on)
     if (i == C_LOCKON) return lock_on_allowed() && show(TB_LOCKON) && (g_town_edit || g_game.place == 2);
     if (is_combo(i)) return g_combo[i - C_COMBO] != 0;
     return false;
 }
 bool in_mode(int i, bool menu) {
     if (g_kind == KIND_EMU) return emu_mode(i, menu);
-    if (emu_ctl(i)) return false;  // (the emulator-style layout's alone)
+    if (emu_ctl(i) || i == C_CSTICK) return false;  // (the emulator-style layout's alone)
     if (i == C_TOWN) return !menu && (g_town_edit || town_available());
     // (the run button: with show_stick_run 0, in a hunt and in towns, either layout, never in a menu - R turns its pages)
     if (i == C_RUN) return !menu && !show(TB_STICKRUN);
@@ -646,6 +650,8 @@ void parse_layout(const std::string &text, Layout *l, bool settings) {
         if (n >= 2 && !strcmp(key, "opacity")) g_set.opacity = std::clamp(x, .2f, 1.0f);
         if (n >= 2 && !strcmp(key, "camera_speed")) g_set.camera = std::clamp(x, .2f, 5.0f);
         if (n >= 2 && !strcmp(key, "debug")) g_set.debug = x != 0;
+        if (n >= 2 && !strcmp(key, "swipe_camera")) g_set.swipe_cam = x != 0;
+        if (n >= 2 && !strcmp(key, "auto_run")) g_set.auto_run = x != 0;
         if (n >= 2 && !strncmp(key, "show_", 5))
             for (int b = 0; b < TB_COUNT; b++)
                 if (!strcmp(key + 5, TB_KEY[b])) g_set.show[b] = x != 0;
@@ -695,6 +701,8 @@ void save_layout(const Layout &l) {
     write_layout_lines(f, l, nullptr);
     fprintf(f, "# shown while no controller is connected (auto), always (on) or never (off: the settings button alone)\n");
     fprintf(f, "controls %s\nopacity %.2f\ncamera_speed %.2f\n", CONTROLS_KEY[g_set.controls], g_set.opacity, g_set.camera);
+    fprintf(f, "# Traditional (the emulator-style layout) only: a drag on the picture turns the camera, the thumb past the stick's rim runs\n");
+    fprintf(f, "swipe_camera %d\nauto_run %d\n", g_set.swipe_cam ? 1 : 0, g_set.auto_run ? 1 : 0);
     fprintf(f, "# which of the game's buttons show (1) or not (0)\n");
     for (int b = 0; b < TB_COUNT; b++) fprintf(f, "show_%s %d\n", TB_KEY[b], g_set.show[b] ? 1 : 0);
     fprintf(f, "# the combined buttons: the game's buttons each presses together\n");
@@ -1194,7 +1202,7 @@ int hit(const Layout &l, float x, float y, float w, float h, int *part, float sl
 }
 
 // ------------------------------------------------------------------ fingers (the app's main thread)
-enum Kind { F_NONE, F_BUTTON, F_STICK, F_CAMERA, F_MENU, F_ITEM, F_EDIT, F_CHAT };  // (F_CHAT: the chat button's)
+enum Kind { F_NONE, F_BUTTON, F_STICK, F_CAMERA, F_MENU, F_ITEM, F_EDIT, F_CHAT, F_CSTICK };  // (F_CSTICK: Traditional's C-stick)  // (F_CHAT: the chat button's)
 struct Finger {
     SDL_FingerID id;
     Kind kind;
@@ -1322,6 +1330,8 @@ struct State {
     uint64_t lit_until;
     Seq item, ammo, cursor;  // the item bar's steps, the ammo's, a menu cursor's
     float cs_x, cs_y;        // the C-stick's push for a drag (where the camera hook isn't there), -1..1
+    bool ck_on;              // Traditional's C-stick under a thumb: its push (-1..1, y up) and the knob's place, pixels
+    float ck_x, ck_y, ck_kx, ck_ky;
     uint64_t cs_until, frame_ns;
     float w, h;              // the screen, pixels
     Layout layout, saved;
@@ -1539,6 +1549,21 @@ void stick_to(State &s, float x, float y) {  // (the knob under the thumb, kept 
     if (d < r) s.run_armed = true;
     if (d > r) x = s.bx + dx / d * r, y = s.by + dy / d * r;
     s.kx = x, s.ky = y;
+}
+// Traditional's C-stick under a thumb at (x, y): the knob kept inside the rim, the push -1..1 (up positive, as the circle
+// pad's), with a small dead zone and the first bit of tilt already past the game's own
+void cstick_to(State &s, float x, float y) {
+    const Geo g = place(s.layout, C_CSTICK, s.w, s.h);
+    float dx = x - g.c.x, dy = y - g.c.y, d = sqrtf(dx * dx + dy * dy);
+    if (d > g.r && d > 0) dx = dx / d * g.r, dy = dy / d * g.r, d = g.r;
+    s.ck_kx = g.c.x + dx, s.ck_ky = g.c.y + dy;
+    const float m = g.r > 0 ? d / g.r : 0;
+    if (m < .08f || d <= 0) {
+        s.ck_x = s.ck_y = 0;
+        return;
+    }
+    const float o = .28f + .72f * std::min(1.0f, (m - .08f) / .82f);
+    s.ck_x = dx / d * o, s.ck_y = -dy / d * o;  // (screen y is down)
 }
 
 // The stick's locked run ends (why: for the log); it locks again only for a thumb come back inside the rim, or a new one
@@ -2322,6 +2347,18 @@ bool finger_event(const SDL_Event &e) {
         if ((c == C_R || c == C_DODGE || c == C_CORNER || c == C_RDODGE || c == C_RSECOND || c == C_AMMO_UP ||
              c == C_AMMO_DOWN) && item.in(x, y))
             c = -1;  // (narrow screens: their places reach the item bar)
+        if (c == C_CSTICK) {  // Traditional's C-stick: a thumb of its own, the knob moves with it
+            if (s.ck_on) {
+                c = -1;
+            } else {
+                f->kind = F_CSTICK, f->ctl = c;
+                s.ck_on = true;
+                cstick_to(s, x, y);
+                haptics_tap();
+                recompute_held(s);
+                return true;
+            }
+        }
         // (the stick's ground is the stick's, but for a button's own circle: the margin round the Town and touch screen
         // buttons reaches it, with the stick made bigger or the left side made smaller beside the touch screen's corner,
         // and a thumb meant for the stick opened the town's list or swapped the screens, 4u-native #31)
@@ -2410,7 +2447,10 @@ bool finger_event(const SDL_Event &e) {
                 haptics_tap();
             }
         } else if (f->kind == F_CAMERA || (f->kind == F_BUTTON && (f->ctl == C_RFIRE || f->ctl == C_RAIM) && f->moved && !f->done)) {
-            s.cam_dx += dx, s.cam_dy += dy;  // (a drag on the shot or the aim aims while it is held)
+            // (Traditional: a drag on the picture turns the camera only with Camera swipe on: the C-stick does otherwise)
+            if (f->kind != F_CAMERA || g_kind != KIND_EMU || g_set.swipe_cam) s.cam_dx += dx, s.cam_dy += dy;  // (a drag on the shot or the aim aims while it is held)
+        } else if (f->kind == F_CSTICK) {
+            cstick_to(s, x, y);
         } else if (f->kind == F_STICK) {
             stick_to(s, x, y);
         } else if (f->kind == F_ITEM) {  // a swipe turns the bar, an item every so far; up or down with a gun: the ammo
@@ -2491,6 +2531,7 @@ bool finger_event(const SDL_Event &e) {
     if (f->kind == F_BUTTON && f->ctl == C_RAIM && !f->done && !cancel && f->btn && f->out0 && g_game.weapon_drawn == 1 && !s.menu &&
         !f->moved && now - f->t0 < AIM_TAP && e.type == SDL_EVENT_FINGER_UP)
         s.aim_latch = f->btn;
+    if (f->kind == F_CSTICK) s.ck_on = false, s.ck_x = s.ck_y = 0;
     if (f->kind == F_STICK) {
         s.stick_on = false;
         // The thumb lifted on the lock circle, armed (it came from inside the rim or landed elsewhere, and a run can
@@ -2616,9 +2657,10 @@ void frame_input(State &s, bool controller, UiInput &out) {
                 CONTROLS_KEY[g_set.controls], (int)controller);
         if (!visible) {  // (what the fingers held lets go; a drag still turns the camera)
             for (Finger &f : s.f)
-                if (f.kind == F_BUTTON || f.kind == F_STICK || f.kind == F_ITEM) f.kind = F_NONE;
+                if (f.kind == F_BUTTON || f.kind == F_STICK || f.kind == F_ITEM || f.kind == F_CSTICK) f.kind = F_NONE;
             if (s.bar_open) bar_close(s);
             s.stick_on = false;
+            s.ck_on = false, s.ck_x = s.ck_y = 0;
             run_end(s, "the controls hidden");
             recompute_held(s);
         }
@@ -2665,10 +2707,13 @@ void frame_input(State &s, bool controller, UiInput &out) {
             out.cstick_y = (int16_t)std::clamp(s.cs_y * 156.0f, -156.0f, 156.0f);
     }
     s.cam_dx = s.cam_dy = 0;
+    if (s.ck_on && !s.edit && s.h > 0)  // (Traditional's C-stick: the game's, as a controller's right stick)
+        out.cstick_x = (int16_t)std::clamp(s.ck_x * 156.0f, -156.0f, 156.0f),
+        out.cstick_y = (int16_t)std::clamp(s.ck_y * 156.0f, -156.0f, 156.0f);
     // The stick's locked run ends once a run can't go on: show_stick_run turned off, a menu of the game's open, the
     // controls hidden or in the editor, the weapon out, the hunter not played (away from a town and from the quest camera:
     // a cutscene, a cart, the quest's end; not a stall of the game's: PLAY_STALL)
-    bool stick_run = show(TB_STICKRUN);
+    bool stick_run = g_kind == KIND_EMU ? g_set.auto_run : show(TB_STICKRUN);  // (Traditional: its own switch, off at first)
     bool quest_cam = Port::Hooks::CameraTurnActive();
     if (quest_cam) s.quest_cam_ns = now, s.quest_cam_frame = g_frames;
     else quest_cam = g_frames_fed && s.quest_cam_ns && now - s.quest_cam_ns < PLAY_STALL && g_frames - s.quest_cam_frame < PLAY_FRAMES;
@@ -3456,6 +3501,11 @@ void control_face(ImDrawList *dl, ImFont *font, const Layout &l, int i, float w,
         lock_circle(dl, g.c, g.r, a * .8f, false, false);
         return;
     }
+    if (i == C_CSTICK) {  // (Traditional's: the base, and the knob under its thumb)
+        if (s.ck_on && !s.edit) stick(dl, g.c, ImVec2(s.ck_kx, s.ck_ky), g.r, a, true);
+        else stick(dl, g.c, g.c, g.r, a * .8f, false);
+        return;
+    }
     if (i == C_STICK) {
         if ((s.stick_on || s.run_free) && !s.edit) {
             // (a locked run going on by itself: the knob held at the rim, forward)
@@ -4159,6 +4209,12 @@ std::string touch_setting(const std::string &key) {
     if (key == "opacity") return snprintf(text, sizeof text, "%.2f", g_set.opacity), text;
     if (key == "camera_speed") return snprintf(text, sizeof text, "%.2f", g_set.camera), text;
     if (key == "attack_style") return std::to_string(s.layout.style);
+    if (key == "swipe_camera") return g_set.swipe_cam ? "1" : "0";
+    if (key == "auto_run") return g_set.auto_run ? "1" : "0";
+    if (!key.compare(0, 10, "trad_show_")) {  // (Traditional's controls shown or hidden: the layout in use, when it is that kind)
+        const int c = ctl_by_key(key.c_str() + 10);
+        return c < 0 || !hideable(c) ? "" : (s.layout.off >> c & 1) ? "0" : "1";
+    }
     if (!key.compare(0, 5, "combo") && key.size() == 6 && key[5] >= '1' && key[5] <= '0' + COMBOS) return combo_text(g_combo[key[5] - '1']);
     if (!key.compare(0, 5, "show_"))
         for (int b = 0; b < TB_COUNT; b++)
@@ -4194,6 +4250,18 @@ void touch_set_setting(const std::string &key, const std::string &value) {
             for (int i = 0; i < STYLE_COUNT && s.layout.style != style; i++) next_style(s);
         }
         s.layout.style = style, g_style = style;
+    } else if (key == "swipe_camera") {
+        g_set.swipe_cam = x != 0;
+    } else if (key == "auto_run") {
+        g_set.auto_run = x != 0;
+    } else if (!key.compare(0, 10, "trad_show_")) {
+        const int c = ctl_by_key(key.c_str() + 10);
+        known = c >= 0 && hideable(c);
+        if (known) {
+            if (x != 0) s.layout.off &= ~(1ull << c);
+            else s.layout.off |= 1ull << c;
+            g_off = s.layout.off;
+        }
     } else if (!key.compare(0, 5, "combo") && key.size() == 6 && key[5] >= '1' && key[5] <= '0' + COMBOS) {
         g_combo[key[5] - '1'] = combo_mask(value);
     } else if (!key.compare(0, 5, "show_")) {
@@ -4254,6 +4322,10 @@ void profile_in_use(State &s, const Layout &l, const char *why) {
             s.layout.kind == KIND_EMU ? "emulator-style" : "the port's own");
 }
 }  // namespace
+int touch_layout_kind() {
+    ensure_loaded(g_s);
+    return g_s.layout.kind;
+}
 int touch_profile_active() {
     ensure_loaded(g_s);
     return g_s.layout.profile;

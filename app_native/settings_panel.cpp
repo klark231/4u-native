@@ -268,6 +268,7 @@ int index_of(const char* const (&keys)[N], const std::string& value) {
 enum class View { Main, Page, Buttons, ComboEdit, Keyboard, CloseChanges, Restart, Exit, Reset, RemoveDriver, RemoveMod, RemoveCheat,
                   Conflicts, PadList, PadMap, OpenSite, OpenDiscord, Profiles, ProfileSlot,
                   Keybinds, KeyCapture, Chat, Friends, ChatOn,  // (the chat's: settings_chat.inc)
+                  ChatDialog,  // (the chat button's dialog over the game: touch_chat_dialog)
                   Verify };  // (System > Your game > Verify game files: verify_rows)
 // View::Buttons opened from the Controller rows (playing with a controller): its combined buttons alone, as the MHGU
 // port's where there are no touch controls
@@ -341,6 +342,7 @@ struct Drag {
     bool pressed = false, moving = false;
 };
 struct State {
+    size_t chat_dialog_lines = 0;  // (the chat dialog: the lines it showed, to follow a new one)
     Draft draft, saved, boot;
     bool editing = false, boot_set = false, focus_request = true, saved_notice = false, save_request = false;
     int page = 0;              // the section (page_ids)
@@ -1719,7 +1721,7 @@ void reopen_picker(std::vector<Row>& rows) {
 // RecentLobby1..; an x takes one out), Custom... (typed on the keyboard, the last one offered again) and Off, as MHGU's
 // hub server row
 std::string g_custom_lobby;
-void lobby_row(std::vector<Row>& rows) {
+[[maybe_unused]] void lobby_row(std::vector<Row>& rows) {
     const std::vector<std::string> used = s.draft.lobbies;
     const int n = (int)std::size(LOBBY_LIST), m = (int)used.size(), custom = n + m, off = custom + 1;
     const std::string now = s.draft.lobby;
@@ -2025,8 +2027,46 @@ void rows_play_with(std::vector<Row>& r) {
                         "Los hubs de esta app: solo los servidores de hubs (lo predeterminado). Sala de Citra: solo una sala de Azahar / Citra, para jugar con los del juego de 3DS: entra a una de ellos o crea la tuya. Mixto: las dos a la vez. En Mixto estás en la sala y en los servidores de hubs juntos, y un hub que creas en el juego está también en la sala, así que los jugadores de Azahar y Citra y los de los servidores de hubs se encuentran todos en tu juego. Se aplica al momento.");
 }
 void reset_play_with() { net_set_play_with(PLAY_HUBS); }
-MENU_ENTRY("multiplayer", 11, [](std::vector<Row>& r) { header(r, "net.hub.head", say("Local play and hubs", "Juego local y hubs")); }, {}, uses_hubs);
-MENU_PAGE("multiplayer/hubs", "Internet hubs", "multiplayer", 12, uses_hubs, [](Row& r) {
+MENU_ENTRY("multiplayer", 11, [](std::vector<Row>& r) { header(r, "net.hub.head", say("Local play and hubs", "Juego local y hubs")); });
+// Host port (UDP) and Search hosts, as MHGU's Network tab has them: the port the room this phone hosts uses, and the hosts
+// (a VPN's) that "Search this Wi-Fi" asks besides the network's own
+void rows_host_port(std::vector<Row>& r) {
+    add_text(r, "net.port.top", "Host port (UDP)", &s.draft.host_port, KB_DIGITS, 5, "HostPort", s.draft.host_port,
+             say("The UDP port of the room this phone hosts, 1 to 65535; rooms use 24872. Everyone who joins types the same one. "
+                 "(The hub servers are reached over TCP at their own port: nothing listens here for them.)",
+                 "El puerto UDP de la sala que aloja este teléfono, de 1 a 65535; las salas usan 24872. Todos los que entran escriben el mismo. "
+                 "(A los servidores de hubs se llega por TCP a su propio puerto: aquí no escucha nada para ellos.)"),
+             check_port);
+}
+void reset_host_port() { s.draft.host_port = defaults().host_port; }
+void rows_search_hosts(std::vector<Row>& r) {
+    const std::string hosts = app_setting("Network", "SearchHosts", "");
+    Row row;
+    row.id = "net.hosts", row.title = say("Search hosts", "Buscar anfitriones");
+    row.value = hosts.empty() ? std::string(say("LAN", "LAN")) : hosts;
+    row.arrow = true;
+    row.help = say("A host's IP address or name, to play over a VPN: \"Search this Wi-Fi\" asks it too, besides your network. Several, apart by commas. Empty: your network only.",
+                   "La dirección IP o el nombre de un anfitrión, para jugar por VPN: \"Buscar en esta Wi-Fi\" también le pregunta, además de tu red. Varios, separados por comas. Vacío: solo tu red.");
+    row.activate = [hosts]() {
+        open_keyboard(say("Search hosts", "Buscar anfitriones"), hosts, KB_ANY, 200,
+                      say("host or host:port, apart by commas. Empty: your network only.", "host o host:puerto, separados por comas. Vacío: solo tu red."),
+                      [](const std::string& typed, std::string&) {
+                          std::string clean;
+                          for (const char ch : typed) clean += (ch == ' ' || ch == ';') ? ',' : ch;
+                          app_setting_set("Network", "SearchHosts", clean);
+                          app_settings_save();
+                          return true;
+                      });
+    };
+    r.push_back(std::move(row));
+}
+void reset_search_hosts() {
+    app_setting_set("Network", "SearchHosts", "");
+    app_settings_save();
+}
+MENU_ENTRY("multiplayer", 12, rows_host_port, reset_host_port);
+MENU_ENTRY("multiplayer", 13, rows_search_hosts, reset_search_hosts);
+MENU_PAGE("multiplayer/hubs", "Internet hubs", "multiplayer", 14, uses_hubs, [](Row& r) {
     r.value = hubs_summary();
     r.help = say("Hubs over the internet through a hub server: the servers, the matchmaking key, and a check that they answer.",
                  "Hubs por internet a través de un servidor de hubs: los servidores, la clave de emparejamiento y una comprobación de que responden.");
@@ -2039,8 +2079,8 @@ MENU_PAGE("multiplayer/hubs/servers", "Hub servers", "multiplayer/hubs", 10, {},
 MENU_ENTRY("multiplayer/hubs/servers", 10, rows_hub_servers, reset_hub_servers);
 MENU_ENTRY("multiplayer/hubs", 20, rows_hub_key, reset_hub_key);
 MENU_ENTRY("multiplayer/hubs", 30, rows_hub_check);
-MENU_ENTRY("multiplayer", 14, [](std::vector<Row>& r) { header(r, "net.cross.head", tr("Play online with")); });
-MENU_ENTRY("multiplayer", 15, rows_play_with, reset_play_with);
+MENU_ENTRY("multiplayer", 15, [](std::vector<Row>& r) { header(r, "net.cross.head", tr("Play online with")); });
+MENU_ENTRY("multiplayer", 16, rows_play_with, reset_play_with);
 // The Multiplayer section (MENU.md): where this phone is and its nickname on the section's page, with Leave while in a
 // room; joining a room (an address, the rooms on this Wi-Fi, the lobby's public rooms), hosting one, the hunters in it
 // and its chat on pages one level down
@@ -2056,12 +2096,12 @@ void status_rows(std::vector<Row>& r) {  // (where this phone is: its colour at 
 MENU_ENTRY("multiplayer", 10, status_rows);
 void rows_multiplayer_20(std::vector<Row>& r) {
     Draft& c = s.draft;
-    add_text(r, "net.nick", "Room nickname", &c.nick, KB_NICK, 20, "Nickname", c.nick.empty() ? tr("Choose one") : c.nick,
+    add_text(r, "net.nick", "Citra Nickname", &c.nick, KB_NICK, 20, "Nickname", c.nick.empty() ? tr("Choose one") : c.nick,
              tr("4 to 20 letters, digits, spaces, '.', '_' or '-'."), check_nick);
     if (!rooms::ValidNickname(c.nick)) r.back().ink = theme().warn;
 }
 void reset_multiplayer_20() { s.draft.nick = defaults().nick; }
-MENU_ENTRY("multiplayer", 16, rows_multiplayer_20, reset_multiplayer_20, uses_rooms);  // (the rooms': with rooms)
+MENU_ENTRY("multiplayer/join", 8, rows_multiplayer_20, reset_multiplayer_20);  // (the Citra Room's: its nickname)
 void rows_multiplayer_25(std::vector<Row>& r) {
     const rooms::Status st = rooms::GetStatus();
     const bool joining = st.state == rooms::State::Joining;
@@ -2115,14 +2155,90 @@ void reset_multiplayer_join_10() {
 MENU_ENTRY("multiplayer/join", 10, rows_multiplayer_join_10, reset_multiplayer_join_10);
 MENU_ENTRY("multiplayer/join", 20, lan_rows);
 // Citra Room > Advanced: the lobby that lists the public rooms (MHGU's Citra Web API URL)
-void rows_multiplayer_join_30(std::vector<Row>& r) {
-    header(r, "net.lobby.head", tr("Advanced"));
-    lobby_row(r);
+void rows_multiplayer_join_30(std::vector<Row>& r) { header(r, "net.lobby.head", tr("Advanced")); }
+std::string urls_summary() {
+    const std::vector<std::string> list = net_lobby_list();
+    if (list.empty()) return tr("Off");
+    if (list.size() == 1) return list[0];
+    return fmt(say("%d URLs", "%d URL"), (int)list.size());
+}
+// One typed URL: no blanks, not "off"; http:// is put before a bare name (the lobby is plain HTTP)
+bool lobby_url_name(const std::string& typed, std::string& name, std::string& error) {
+    const size_t from = typed.find_first_not_of(" \t"), to = typed.find_last_not_of(" \t");
+    name = from == std::string::npos ? "" : typed.substr(from, to - from + 1);
+    if (name.empty() || name.find_first_of(" ,;\t") != std::string::npos || !strcasecmp(name.c_str(), "off")) {
+        error = say("Type one address, such as http://name:port.", "Escribe una sola dirección, como http://nombre:puerto.");
+        return false;
+    }
+    if (name.find("://") == std::string::npos) name = "http://" + name;
+    return true;
+}
+bool lobby_urls_set(const std::vector<std::string>& list, std::string& error) {
+    if (!net_lobby_list_set(list)) {
+        error = say("At most 8 Web API URLs.", "Como máximo 8 URL de la API web.");
+        return false;
+    }
+    app_settings_save();
+    s.lobby_asked.clear();  // (the browser asks the new list)
+    return true;
+}
+void reset_lobby_urls() {
+    net_lobby_list_set(net_lobby_default_list());
+    app_settings_save();
+    s.lobby_asked.clear();
+}
+// Citra Room > Advanced > Citra Web API URLs: each on a row with Remove under it, Add a web API URL, restore (as the hub servers)
+void rows_lobby_urls(std::vector<Row>& r) {
+    const std::vector<std::string> list = net_lobby_list();
+    note(r, "wu.what", say("The lobbies that list the public rooms of the Citra Room Browser. Every URL is asked and their rooms shown together.",
+                           "Los lobbies que listan las salas públicas del buscador de salas de Citra. Se pregunta a todas las URL y se muestran sus salas juntas."),
+         touch_look().dim);
+    if (list.empty()) header(r, "wu.none", say("No URL: no list of public rooms", "Sin URL: no hay lista de salas públicas"));
+    for (size_t i = 0; i < list.size(); i++) {
+        const std::string id = std::to_string(i), start = list[i];
+        const std::string title = fmt(say("Citra Web API URL %d", "URL de la API web de Citra %d"), (int)i + 1);
+        Row row;
+        row.id = "wu." + id, row.title = title, row.value = start, row.arrow = true;
+        row.help = say("Select to change this address: http://name:port.", "Selecciona para cambiar esta dirección: http://nombre:puerto.");
+        row.activate = [i, start, title]() {
+            open_keyboard(title, start, KB_ANY, 200, say("A lobby's address, as http://name:port.", "La dirección de un lobby, como http://nombre:puerto."),
+                          [i](const std::string& typed, std::string& error) {
+                              std::vector<std::string> l = net_lobby_list();
+                              std::string name;
+                              if (i >= l.size() || !lobby_url_name(typed, name, error)) return false;
+                              l[i] = name;
+                              return lobby_urls_set(l, error);
+                          });
+        };
+        r.push_back(std::move(row));
+        action(r, "wud." + id, fmt(say("Remove URL %d", "Quitar la URL %d"), (int)i + 1), [i]() {
+            std::vector<std::string> l = net_lobby_list();
+            std::string error;
+            if (i < l.size()) l.erase(l.begin() + (long)i);
+            lobby_urls_set(l, error);
+        });
+        r.back().arrow = false;
+        r.back().help = say("Takes this URL out of the list.", "Quita esta URL de la lista.");
+    }
+    action(r, "wu.add", say("Add a web API URL", "Agregar una URL de la API web"), []() {
+        open_keyboard(say("New web API URL", "Nueva URL de la API web"), "", KB_ANY, 200,
+                      say("A lobby's address, as http://name:port.", "La dirección de un lobby, como http://nombre:puerto."),
+                      [](const std::string& typed, std::string& error) {
+                          std::vector<std::string> l = net_lobby_list();
+                          std::string name;
+                          if (!lobby_url_name(typed, name, error)) return false;
+                          if (std::find(l.begin(), l.end(), name) == l.end()) l.push_back(name);
+                          return lobby_urls_set(l, error);
+                      });
+    }, list.size() < 8);
+    r.back().help = say("Another lobby: up to 8.", "Otro lobby: hasta 8.");
+    action(r, "wu.reset", say("Restore the default URLs", "Restaurar las URL predeterminadas"), []() { reset_lobby_urls(); });
+    r.back().help = say("The list goes back to the two that come with the app: http://88.198.47.46:5000 and http://3ds.mgn.pub:3000.",
+                        "La lista vuelve a las dos que vienen con la app: http://88.198.47.46:5000 y http://3ds.mgn.pub:3000.");
 }
 // Citra Room > Citra Room Browser: the lobby's public rooms
 void rows_multiplayer_browser_10(std::vector<Row>& r) {
-    Draft& c = s.draft;
-    const std::string url = lobby_url(c.lobby);
+    const std::string url = net_lobby_urls_text();
     const NetLobby lobby = net_lobby();
     const bool answered = lobby.done && lobby.url == url;
     // (asked as the page shows it, once the notice about playing online was closed: once a menu for each lobby)
@@ -2132,7 +2248,7 @@ void rows_multiplayer_browser_10(std::vector<Row>& r) {
     }
     // (enabled while it asks, or the picked row would vanish under the finger: a second tap waits for the same answer)
     action(r, "net.refresh", tr("Show its rooms"), []() {
-        const std::string u = lobby_url(s.draft.lobby);
+        const std::string u = net_lobby_urls_text();
         online_then(u, [u]() { net_lobby_fetch(u); });
     }, !url.empty(), "Refresh");
     r.back().value = lobby.busy ? tr("Asking...") : !answered ? "" : lobby.list.ok ? fmt("%d room(s)", (int)lobby.list.rooms.size()) : tr("No answer");
@@ -2177,9 +2293,15 @@ void rows_multiplayer_browser_10(std::vector<Row>& r) {
         r.push_back(std::move(row));
     }
 }
-void reset_multiplayer_join_30() { s.draft.lobby = defaults().lobby; }
+void reset_multiplayer_join_30() { reset_lobby_urls(); }
 MENU_ENTRY("multiplayer/join", 30, rows_multiplayer_join_30, reset_multiplayer_join_30);
 MENU_ENTRY("multiplayer/join/browser", 10, rows_multiplayer_browser_10);
+MENU_PAGE("multiplayer/join/urls", "Citra Web API URLs", "multiplayer/join", 31, {}, [](Row& r) {
+    r.value = urls_summary();
+    r.help = say("The lobbies that list the public rooms: up to 8, two come with the app. Select to change, remove or add.",
+                 "Los lobbies que listan las salas públicas: hasta 8, dos vienen con la app. Selecciona para cambiar, quitar o agregar.");
+});
+MENU_ENTRY("multiplayer/join/urls", 10, rows_lobby_urls, reset_lobby_urls);
 // Multiplayer > Host a room
 MENU_ENTRY("multiplayer/host", 5, status_rows);
 void rows_multiplayer_host_10(std::vector<Row>& r) {
@@ -2903,7 +3025,84 @@ void reset_controls_40() {  // (and the combined buttons, which its view edits t
     s.draft.show = f.show;
     for (int k = 0; k < 6; k++) s.draft.combo[k] = f.combo[k], s.draft.combo_pad[k] = f.combo_pad[k];
 }
-MENU_ENTRY("controls", 40, rows_controls_40, reset_controls_40);
+bool touch_traditional() { return touch_layout_kind() == 1; }
+bool touch_adaptive() { return !touch_traditional(); }
+MENU_ENTRY("controls", 40, rows_controls_40, reset_controls_40, touch_adaptive);  // (Adaptive's list of buttons)
+// ---- Touch layout: Adaptive or Traditional (the old build's switch). The layout in use is a control profile (touch.cpp): Adaptive
+// is one of the port's own kind, Traditional an emulator-style one (A B X Y, L R ZL ZR, START, SELECT, the d-pad, the stick
+// and the C-stick, the same always). Changing goes to the first profile of the other kind, or makes a new one in the first free
+// slot: at once, and each keeps its own layout and its own buttons shown or hidden.
+bool set_touch_layout(int want) {
+    if ((touch_traditional() ? 1 : 0) == want) return true;
+    int free_slot = 0;
+    for (int n = 1; n <= 10; n++) {
+        const int k = touch_profile_kind(n);
+        if (k == want) return touch_profile_use(n);
+        if (k < 0 && !free_slot) free_slot = n;
+    }
+    return free_slot && touch_profile_new(free_slot, want);
+}
+void rows_controls_36(std::vector<Row>& r) {
+    add_choice(r, "touch.scheme", "Touch layout", touch_traditional() ? 1 : 0, {tr("Adaptive"), tr("Traditional")}, [](int v) {
+        if (!set_touch_layout(v))
+            s.error = say("It couldn't be done: the ten profiles are taken, or the editor is open. Clear one in Control profiles.",
+                          "No se pudo: los diez perfiles están ocupados, o el editor está abierto. Vacía uno en Perfiles de control.");
+    });
+    r.back().help = say("Adaptive: the buttons change with what you do, the menus', and the bows' and bowguns' own. Traditional: as an emulator's, the same buttons always: A B X Y, L R ZL ZR, START, SELECT, the d-pad, the stick and the C-stick. Each keeps its own places and its own buttons shown or hidden; it applies at once.",
+                        "Adaptable: los botones cambian con lo que haces, los de los menús y los propios de arcos y ballestas. Tradicional: como el de un emulador, siempre los mismos botones: A B X Y, L R ZL ZR, START, SELECT, la cruceta, el stick y el stick C. Cada uno guarda sus lugares y sus botones mostrados u ocultos; se aplica al momento.");
+}
+void reset_controls_36() { set_touch_layout(0); }
+MENU_ENTRY("controls", 36, rows_controls_36, reset_controls_36);
+// A switch of the touch controls' (touch.cpp), at once
+void touch_switch_row(std::vector<Row>& r, const std::string& id, const std::string& title, const std::string& key,
+                      const std::string& help, bool after_save = false) {
+    Row row;
+    const bool on = touch_setting(key) != "0";
+    row.id = id, row.title = title, row.value = tr(on ? "On" : "Off"), row.toggle = on ? 1 : 0, row.help = help;
+    auto set = [key, after_save](bool v) {
+        touch_set_setting(key, v ? "1" : "0");
+        if (after_save) touch_profile_store(touch_profile_active());  // (the layout's own file: it is that profile's)
+    };
+    row.adjust = [set](int d) { set(d > 0); };
+    row.activate = [set, on]() { set(!on); };
+    r.push_back(std::move(row));
+}
+// Traditional's buttons, each shown or hidden (its own list: Adaptive's is Buttons on the screen)
+struct TradControl { const char* key; const char* title; };
+const TradControl TRAD_CONTROLS[] = {{"emu_a", "A"}, {"emu_b", "B"}, {"emu_x", "X"}, {"emu_y", "Y"}, {"emu_l", "L"}, {"emu_r", "R"},
+                                     {"emu_zl", "ZL"}, {"emu_zr", "ZR"}, {"emu_start", "START"}, {"emu_select", "SELECT"},
+                                     {"emu_dpad", "D-pad"}, {"emu_cstick", "C-stick"}, {"stick", "Movement stick"}};
+MENU_PAGE("controls/trad", "Traditional buttons", "controls", 41, touch_traditional, [](Row& r) {
+    int shown = 0, all = 0;
+    for (const TradControl& c : TRAD_CONTROLS) all++, shown += touch_setting(std::string("trad_show_") + c.key) != "0";
+    r.value = std::to_string(shown) + " / " + std::to_string(all);
+    r.help = say("Choose which of the Traditional layout's buttons show on the screen. All show at first.",
+                 "Elige cuáles de los botones de la disposición tradicional se ven en la pantalla. Todos se ven al principio.");
+});
+void rows_trad_buttons(std::vector<Row>& r) {
+    for (const TradControl& c : TRAD_CONTROLS)
+        touch_switch_row(r, std::string("trad.") + c.key, c.title, std::string("trad_show_") + c.key,
+                         say("Shows or hides this button of the Traditional layout. It applies at once.",
+                             "Muestra u oculta este botón de la disposición tradicional. Se aplica al momento."), true);
+}
+void reset_trad_buttons() {
+    for (const TradControl& c : TRAD_CONTROLS) touch_set_setting(std::string("trad_show_") + c.key, "1");
+    touch_profile_store(touch_profile_active());
+}
+MENU_ENTRY("controls/trad", 10, rows_trad_buttons, reset_trad_buttons);
+void rows_trad_options(std::vector<Row>& r) {
+    touch_switch_row(r, "trad.autorun", say("Auto run on the joystick", "Correr solo con el joystick"), "auto_run",
+                     say("Traditional layout: the thumb pushed past the movement stick's rim runs (R held). Off: only the R button runs, as with a controller.",
+                         "Disposición tradicional: el pulgar empujado más allá del borde del stick de movimiento corre (R sostenido). Apagado: solo corre el botón R, como con un mando."));
+    touch_switch_row(r, "trad.swipecam", say("Camera swipe", "Cámara con el dedo"), "swipe_camera",
+                     say("Traditional layout: a drag on the picture turns the camera. Off: only the C-stick turns it.",
+                         "Disposición tradicional: arrastrar sobre la imagen gira la cámara. Apagado: solo la gira el stick C."));
+}
+void reset_trad_options() {
+    touch_set_setting("auto_run", "0");
+    touch_set_setting("swipe_camera", "0");
+}
+MENU_ENTRY("controls", 42, rows_trad_options, reset_trad_options, touch_traditional);
 void rows_controls_50(std::vector<Row>& r) {
     Row row;
     char text[32];
@@ -5082,6 +5281,222 @@ void draw_guides(ImDrawList* dl, float x, float y, float right, float size) {
     }
 }
 
+// ---------------------------------------------------------------- the chat dialog
+// What the chat button opens (as AzaharPlus's chat dialog): a sheet over the lower part of the screen with the game seen
+// above it - the chat's name and a button that goes to the next chat, X; the lines of the chat; a field to type in (a tap
+// opens the keyboard, which keeps what was typed here) and Send. The chat page of the menu is only its settings now. It is a
+// view of the menu so the keyboard, Back and the touch work as everywhere, but only this sheet shows; Back and X close the
+// menu with it. Its opacity: Chat dialog opacity (settings_chat.inc).
+std::string g_chat_draft;  // what was typed, not sent yet
+bool g_chat_fresh;         // just opened: the lines at their end
+void close_chat_dialog(bool* open) {
+    if (!g_dialog_from_button && !s.origins.empty()) {  // (opened from the menu: back to it)
+        pop();
+        return;
+    }
+    s.origins.clear();
+    s.view = View::Main;
+    close_menu(open);
+}
+// The chats the button goes through: Mixed (while it is on), the room's, General, Global, each friend
+struct DialogChat {
+    int channel;
+    std::string peer;
+};
+std::vector<DialogChat> dialog_chats() {
+    std::vector<DialogChat> v;
+    if (chat::bridged()) v.push_back({chat::MIXED, ""});
+    v.push_back({chat::HUB, ""});
+    v.push_back({chat::GENERAL, ""});
+    v.push_back({chat::GLOBAL, ""});
+    for (const chat::Person& p : chat::people())
+        if (p.is_friend) v.push_back({chat::FRIEND, p.id});
+    return v;
+}
+std::string dialog_chat_name(int channel, const std::string& peer) {
+    if (channel == chat::FRIEND) return std::string(cs("Friend: ", "Amigo: ")) + chat::person_name(peer);
+    return chat::channel_name(channel);
+}
+bool dialog_can_say() {
+    const bool room = chat::hub_chat() && chat::hub_up(), online = chat::enabled();
+    return g_chat == chat::HUB ? room : g_chat == chat::MIXED ? room || online : online;
+}
+void touch_chat_dialog(bool* open) {
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    const Theme& look = theme();
+    const Look k = touch_look();
+    const float H = vp->WorkSize.y, W = vp->WorkSize.x;
+    s.m.H = H, s.m.f = ImGui::GetFontSize(), s.m.row = std::max(.09f * H, s.m.f * 2.4f), s.m.pad = .014f * H;
+    s.m.line = std::max(2.f, .0035f * H);
+    const float f = s.m.f, pad = s.m.pad, line = s.m.line;
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && settled()) s.armed = true;
+    {  // (Back, the Android Back key, the controller's B: the menu goes with the dialog)
+        const bool back = pressed(face_key(1)) || pressed(ImGuiKey_Escape) || pressed(ImGuiKey_AppBack);
+        const bool asked = request_back.exchange(false) | request_close.exchange(false);
+        if (asked || (back && settled())) {
+            close_chat_dialog(open);
+            return;
+        }
+    }
+    cs("", "");  // (the language)
+    if (g_chat < 0 || (g_chat == chat::MIXED && !chat::bridged()))
+        g_chat = chat::bridged() ? chat::MIXED : chat::hub_chat() && chat::hub_up() ? chat::HUB : chat::GLOBAL;
+    const float sw = std::min(W * .96f, H * 2.2f), sh = H * .68f;
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + (W - sw) * .5f, vp->WorkPos.y + H - sh), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(sw, sh), ImGuiCond_Always);
+    ImVec4 bg = vec(look.panel);
+    bg.w = std::clamp(chat_dialog_opacity() / 100.f, .2f, 1.f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, bg);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_Text, vec(look.text));
+    ImGui::PushStyleColor(ImGuiCol_Border, vec(look.edge));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, look.game ? 0.f : look.rounding * 2);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(pad * .5f, pad * .35f));
+    ImGui::Begin("Settings##chatdialog", nullptr, fixed_window);
+    auto* window = ImGui::GetCurrentWindow();
+    ImDrawList* dl = window->DrawList;
+    ImFont* font = ImGui::GetFont();
+    ImFont* tf = title_font();
+    const float x0 = window->Pos.x, y0 = window->Pos.y, x1 = x0 + window->Size.x, y1 = y0 + window->Size.y;
+    const float band = std::max(.1f * H, f * 2.6f), side = band * .74f, by = y0 + (band - side) * .5f + line * .5f;
+    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y0 + band), k.band);
+    dl->AddRectFilled(ImVec2(x0, y0 + band), ImVec2(x1, y0 + band + line * .7f), look.game ? RULE_RED : look.accent);
+    bool held = false;
+    std::function<void()> later;
+    // X at the right; at its left the chat's name, a tap on it goes to the next chat
+    ImRect shut(x1 - pad - side, by, x1 - pad, by + side);
+    if (touch_button("###chatshut", shut, true, &held)) later = [open]() { close_chat_dialog(open); };
+    plate(dl, shut, line, held, true);
+    cross(dl, shut.GetCenter(), side * .2f, held ? k.glow : k.ink, std::max(2.f, line * 1.5f));
+    const std::vector<DialogChat> chats = dialog_chats();
+    const std::string name = dialog_chat_name(g_chat, g_chat_peer);
+    const float tsize = std::floor(f * 1.15f);
+    shadow_text(dl, tf, tsize, ImVec2(x0 + pad * 1.5f, by + (side - tsize) * .5f), k.glow, cs("Chat", "Chat"));
+    {
+        const float tw = tf->CalcTextSizeA(tsize, FLT_MAX, 0, cs("Chat", "Chat")).x;
+        const float label_w = std::min(font->CalcTextSizeA(f, FLT_MAX, 0, name.c_str()).x + f * 2.4f, (shut.Min.x - x0) * .6f);
+        ImRect pick(shut.Min.x - pad - std::max(label_w, side * 2), by, shut.Min.x - pad, by + side);
+        if (touch_button("###chatnext", pick, chats.size() > 1, &held)) {
+            later = [chats]() {
+                size_t at = 0;
+                for (size_t i = 0; i < chats.size(); i++)
+                    if (chats[i].channel == g_chat && chats[i].peer == g_chat_peer) at = i;
+                const DialogChat& n = chats[(at + 1) % chats.size()];
+                g_chat = n.channel, g_chat_peer = n.peer;
+                g_chat_fresh = true;
+            };
+        }
+        plate(dl, pick, line, held, chats.size() > 1);
+        ImVec2 ns = font->CalcTextSizeA(f, FLT_MAX, 0, name.c_str());
+        dl->PushClipRect(pick.Min, pick.Max, true);
+        shadow_text(dl, f, ImVec2(pick.GetCenter().x - std::min(ns.x, pick.GetWidth() - f) * .5f, pick.GetCenter().y - ns.y * .5f), k.ink, name.c_str());
+        dl->PopClipRect();
+        (void)tw;
+    }
+    // the input, at the bottom: the field (a tap: the keyboard) and Send
+    const bool can = dialog_can_say();
+    const float in_h = s.m.row;
+    ImRect send(x1 - pad - std::max(side * 1.9f, f * 4.6f), y1 - pad - in_h, x1 - pad, y1 - pad);
+    ImRect field(x0 + pad, send.Min.y, send.Min.x - pad, send.Max.y);
+    const bool has = !g_chat_draft.empty();
+    if (touch_button("###chatfield", field, can, &held))
+        later = []() {
+            const int ch = g_chat;
+            (void)ch;
+            open_keyboard(cs("Say something", "Decir algo"), g_chat_draft, KB_CHAT, chat::max_text(), "",
+                          [](const std::string& typed, std::string&) {
+                              g_chat_draft = typed;  // (Send says it)
+                              return true;
+                          });
+        };
+    plate(dl, field, line * .8f, held, can);
+    {
+        const std::string shown = has ? g_chat_draft : std::string(can ? cs("Type a message...", "Escribe un mensaje...")
+                                                                       : cs("Turn on a chat in the menu to talk", "Activa un chat en el menú para hablar"));
+        ImVec2 ts = font->CalcTextSizeA(f, FLT_MAX, 0, shown.c_str());
+        dl->PushClipRect(ImVec2(field.Min.x + line, field.Min.y), ImVec2(field.Max.x - line, field.Max.y), true);
+        shadow_text(dl, f, ImVec2(field.Min.x + f * .7f, field.GetCenter().y - ts.y * .5f), has && can ? k.ink : k.dim, shown.c_str());
+        dl->PopClipRect();
+    }
+    if (touch_button("###chatsend", send, can && has, &held))
+        later = []() {
+            std::string why;
+            if (chat::say(g_chat, g_chat_peer, g_chat_draft, &why)) {
+                g_chat_draft.clear();
+                s.error.clear();
+                g_chat_fresh = true;
+            } else
+                s.error = chat::explain(why);
+        };
+    plate(dl, send, line, held, can && has);
+    {
+        const char* label = cs("Send", "Enviar");
+        ImVec2 ts = ImGui::CalcTextSize(label);
+        shadow_text(dl, f, ImVec2(send.GetCenter().x - ts.x * .5f, send.GetCenter().y - ts.y * .5f), can && has ? k.glow : look.text_off, label);
+    }
+    float list_bottom = field.Min.y - pad;
+    if (!s.error.empty()) {  // (why a line was not sent, over the field)
+        const float wrap = x1 - x0 - pad * 3, small = std::floor(f * .85f);
+        const ImVec2 es = font->CalcTextSizeA(small, FLT_MAX, wrap, s.error.c_str());
+        dl->AddText(font, small, ImVec2(x0 + pad * 1.5f, list_bottom - es.y), look.warn, s.error.c_str(), nullptr, wrap);
+        list_bottom -= es.y + pad * .5f;
+    }
+    // the lines: newest at the bottom, a finger drags the list; a line with a room shared in it, a tap on it joins
+    const ImRect list(ImVec2(x0 + pad, y0 + band + line * 2 + pad * .5f), ImVec2(x1 - pad, list_bottom));
+    const std::vector<chat::Line> lines = chat::lines(g_chat, g_chat_peer, 60);
+    chat::mark_read(g_chat, g_chat_peer);
+    ImGui::SetCursorScreenPos(list.Min);
+    ImGui::BeginChild("##chatlines", list.GetSize(), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    {
+        ImDrawList* ld = ImGui::GetWindowDrawList();
+        const float wrap = list.GetWidth() - pad * 3;
+        if (lines.empty())
+            shadow_text(ld, f, ImVec2(list.Min.x + pad, list.Min.y + pad), k.dim,
+                        can ? cs("Nothing has been said yet.", "Todavía no se dijo nada.")
+                            : cs("Turn on the room chat or the online chat in the menu's Chat page.",
+                                 "Activa el chat de la sala o el chat en línea en la página Chat del menú."), wrap);
+        for (const chat::Line& l : lines) {
+            const std::string who = l.system ? std::string() : chat::who(l) + ": ", text = chat::line_text(l);
+            const ImU32 ink = l.system ? k.dim : l.mine ? k.ink : l.channel == chat::HUB ? IM_COL32(120, 200, 255, 255)
+                                                      : l.channel == chat::FRIEND ? IM_COL32(244, 150, 200, 255) : k.glow;
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            const ImVec2 ws = font->CalcTextSizeA(f, FLT_MAX, 0, who.c_str());
+            const float room_w = std::max(f * 4, wrap - ws.x);
+            const ImVec2 ts = font->CalcTextSizeA(f, FLT_MAX, room_w, text.c_str());
+            const float h = std::max(ts.y, f) + pad * .9f;
+            ld->AddText(font, f, ImVec2(at.x + pad * .5f, at.y), ink, who.c_str());
+            ld->AddText(font, f, ImVec2(at.x + pad * .5f + ws.x, at.y), l.system ? k.dim : k.ink, text.c_str(), nullptr, room_w);
+            ImGui::Dummy(ImVec2(list.GetWidth() - pad, h));
+            if (l.share == chat::SHARE_ROOM && !l.mine) {
+                ImRect join(ImVec2(at.x + pad * .5f, at.y + h - pad * .4f), ImVec2(at.x + pad * .5f + f * 9, at.y + h - pad * .4f + in_h * .7f));
+                bool jheld = false;
+                if (touch_button(("###chatjoin" + std::to_string(l.serial)).c_str(), join, true, &jheld)) {
+                    const chat::Line copy = l;
+                    later = [copy]() { chat_use_share(copy); };
+                }
+                plate(ld, join, line * .8f, jheld, true);
+                const char* jl = cs("Join this room", "Entrar a esta sala");
+                shadow_text(ld, f * .85f, ImVec2(join.Min.x + f * .5f, join.GetCenter().y - f * .45f), k.glow, jl);
+                ImGui::Dummy(ImVec2(1, in_h * .7f + pad * .4f));
+            }
+        }
+        if (g_chat_fresh || lines.size() != s.chat_dialog_lines) {  // (a new line, or the chat just opened: the end)
+            ImGui::SetScrollHereY(1.f);
+            s.chat_dialog_lines = lines.size();
+            g_chat_fresh = false;
+        }
+        finger_scroll(ImGui::GetCurrentWindow());
+        scroll_mark(ImGui::GetCurrentWindow());
+    }
+    ImGui::EndChild();
+    ImGui::End();
+    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(4);
+    if (later) later();
+}
+
 // The menu: nearly the whole screen - a header with the title, Back (in a submenu or a question), Save and Close; the
 // tabs in a column at the left, the rows in a list a finger drags, the picked row's explanation at the right (under
 // the rows where the screen is narrower)
@@ -5849,7 +6264,9 @@ void settings_panel(bool* open) {
     }
     if (g_chat_asked.exchange(false)) {  // (the chat button over the game: settings_panel_open_chat)
         first_page(3);  // (Multiplayer: page_ids)
-        push(View::Chat, "chat.say");
+        g_dialog_from_button = true;
+        push(View::ChatDialog, "");
+        g_chat_fresh = true;
     }
     // the letters' size: from the screen's height, and the menu's own size
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -5859,7 +6276,8 @@ void settings_panel(bool* open) {
     float px = std::clamp(.034f * H * s.draft.menu_scale / 100.f, .016f * H, .07f * H);
     ImGui::PushFont(nullptr, px / std::max(.01f, style.FontScaleMain * style.FontScaleDpi));
     card_input();
-    touch_panel(open);
+    if (s.view == View::ChatDialog) touch_chat_dialog(open);  // (the chat button's dialog: a sheet, not the menu)
+    else touch_panel(open);
     ImGui::PopFont();
     // (typed text while the keyboard is up, the phone's own keyboard only when asked for; the room's lines: seen)
     text_input(*open && s.view == View::Keyboard ? std::max(1, g_text_input) : 0);

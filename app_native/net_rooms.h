@@ -67,7 +67,12 @@ struct NetLobby {
     std::string url;                  // the address it was asked of
     mh4n::rooms::LobbyList list;
 };
-void net_lobby_fetch(const std::string& url);
+void net_lobby_fetch(const std::string& urls);  // one lobby, or several apart by spaces: their rooms as one list
+// The lobbies (Citra Web API URLs) as a list ([Network] LobbyUrls; empty: the two that come with the app, "off": none; up to 8)
+std::vector<std::string> net_lobby_list();
+bool net_lobby_list_set(const std::vector<std::string>& list);  // false: too many
+std::string net_lobby_urls_text();                              // the list apart by spaces ("" when none)
+std::vector<std::string> net_lobby_default_list();
 NetLobby net_lobby();
 
 // ---- hub servers (mh4n/hub.h): the same local play through an MHGURecomp hub server instead of a room. Set in

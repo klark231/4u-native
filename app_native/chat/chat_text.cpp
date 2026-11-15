@@ -76,8 +76,19 @@ std::string line_text(const Line &l) {
     return s;
 }
 
+std::string who(const Line &l) {
+    if (l.system) return "";
+    if (l.mine) return t("You", "Tú");  // (this device's own lines: no mark of a game or a room)
+    if (l.channel == HUB) return l.name + " (" + t("Room", "Sala") + ")";
+    if (l.channel == FRIEND) return l.name;
+    if (l.game == "mh4u") return l.name + " (MH4U)";
+    if (l.game == "mhgu") return l.name + " (MHGU)";
+    return l.name;
+}
+
 std::string channel_name(int channel) {
     switch (channel) {
+    case MIXED: return t("Mixed", "Mixto");
     case GLOBAL: return t("Global", "Global");
     case GENERAL: return std::string(t("General", "General")) + " (" + game_title(game()) + ")";
     case HUB: return game() == "mh4u" ? t("Room", "Sala") : t("Hub", "Sala");
@@ -86,6 +97,11 @@ std::string channel_name(int channel) {
 }
 std::string channel_help(int channel) {
     switch (channel) {
+    case MIXED:
+        return t("The room and Global as one. What you say goes to both. What the others say in Global passes on into the room, as "
+                 "\"Name (MH4U): text\" under your room nickname, so Azahar and Citra players read it too.",
+                 "La sala y Global como uno. Lo que dices va a las dos. Lo que dicen los demás en Global pasa a la sala, como "
+                 "\"Nombre (MH4U): texto\" con tu apodo de sala, así que los de Azahar y Citra también lo leen.");
     case GLOBAL:
         return t("Everyone in the online chat, from both ports (MHGU and MH4U). Anyone can read it: never share anything private.",
                  "Todos los del chat en línea, de los dos ports (MHGU y MH4U). Cualquiera puede leerlo: nunca compartas nada privado.");

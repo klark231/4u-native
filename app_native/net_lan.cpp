@@ -7,10 +7,12 @@
 // The room id is drawn when this phone starts answering: the same room answers the broadcast and the probe to the
 // phone itself, and is listed once.
 #include "net_lan.h"
+#include "app_settings.h"
 
 #include <SDL3/SDL.h>
 #include <android/log.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <errno.h>
 #include <ifaddrs.h>
 #include <jni.h>
@@ -207,11 +209,46 @@ bool parse(const std::uint8_t* b, size_t n, std::uint32_t nonce, LanRoom* room, 
     return true;
 }
 
+// [Network] SearchHosts: hosts (IPv4 address or name, host[:port] apart by commas) that a search asks besides the network's
+// own; the port is not needed (every host answers on kLanPort)
+std::vector<in_addr> search_hosts() {
+    std::vector<in_addr> out;
+    const std::string list = app_setting("Network", "SearchHosts", "");
+    std::string cur;
+    for (const char ch : list + ",") {
+        if (ch != ',') {
+            cur += ch;
+            continue;
+        }
+        std::string host = cur;
+        cur.clear();
+        const size_t from = host.find_first_not_of(" \t");
+        if (from == std::string::npos) continue;
+        host = host.substr(from, host.find_last_not_of(" \t") - from + 1);
+        if (host.rfind("http://", 0) == 0) host = host.substr(7);
+        const size_t colon = host.find(':');
+        if (colon != std::string::npos) host = host.substr(0, colon);
+        in_addr a{};
+        if (inet_pton(AF_INET, host.c_str(), &a) != 1) {
+            addrinfo hints{}, *res = nullptr;
+            hints.ai_family = AF_INET;
+            hints.ai_socktype = SOCK_DGRAM;
+            if (getaddrinfo(host.c_str(), nullptr, &hints, &res) != 0 || !res) continue;
+            a = reinterpret_cast<sockaddr_in*>(res->ai_addr)->sin_addr;
+            freeaddrinfo(res);
+        }
+        out.push_back(a);
+        if (out.size() >= 8) break;
+    }
+    return out;
+}
+
 void search_thread() {
     std::vector<LanRoom> found;
     std::vector<std::uint32_t> ids;
     std::vector<in_addr> broadcast, mine;
     networks(&broadcast, &mine);
+    const std::vector<in_addr> extra = search_hosts();
     const int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s >= 0) {
         int one = 1;
@@ -239,6 +276,7 @@ void search_thread() {
                 send_to(in_addr{htonl(INADDR_BROADCAST)});
                 for (in_addr a : broadcast) send_to(a);
                 send_to(in_addr{htonl(INADDR_LOOPBACK)});
+                for (in_addr a : extra) send_to(a);  // (Search hosts: a VPN's hosts, besides the network's own)
                 asked++;
             }
             const auto wait = std::min(next_ask, end) - now;
