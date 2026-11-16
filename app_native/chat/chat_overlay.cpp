@@ -28,7 +28,8 @@ unsigned g_seen_serial;
 bool g_serial_known;
 // the button: its centre as fractions of the screen, its size (1: its own); a drag under way
 constexpr float HOME_X = .11f, HOME_Y = .30f;  // (right of the column of buttons at the left edge, over the stick)
-float g_bx = HOME_X, g_by = HOME_Y, g_bs = 1;
+constexpr float HOME_S = 34 / 56.f;           // (34 dp, about the START button)
+float g_bx = HOME_X, g_by = HOME_Y, g_bs = HOME_S;
 bool g_loaded, g_drag, g_dragged, g_on_screen;
 float g_drag_dx, g_drag_dy, g_down_x, g_down_y, g_w = 1, g_h = 1;
 
@@ -76,7 +77,7 @@ bool overlay_frame() {
         const size_t most = (size_t)std::clamp(look("lines", 8), 1, 20);
         if (g_shown.size() > most) g_shown.erase(g_shown.begin(), g_shown.end() - (long)most);
     }
-    const int stay = look("fade", 10);  // (seconds a line stays before it fades out over one more; 0: it stays)
+    const int stay = look("fade", 15);  // (seconds a line stays before it fades out over one more; 0: it stays)
     if (stay > 0)
         g_shown.erase(std::remove_if(g_shown.begin(), g_shown.end(), [now, stay](const Shown &s) { return now - s.at > stay + 1.0; }), g_shown.end());
     if (menu) g_shown.clear();
@@ -106,7 +107,7 @@ void overlay_draw(float w, float h) {
     const double now = SDL_GetTicks() / 1000.0;
     g_on_screen = wanted();
     if (g_on_screen) {  // (a rounded square, a speech bubble in it, the lines not read in a red circle; all of it as faint as Button opacity says)
-        const float op = std::clamp(look("buttonop", 100), 10, 100) / 100.f, sd = side(), bx = g_bx * w, by = g_by * h;
+        const float op = std::clamp(look("buttonop", 80), 10, 100) / 100.f, sd = side(), bx = g_bx * w, by = g_by * h;
         const ImVec2 lo(bx - sd * .5f, by - sd * .5f), hi(bx + sd * .5f, by + sd * .5f);
         const float round = sd * .3f;
         // (the touch controls' colours: a wine plate with a bronze edge, a gold bubble with wine lines in it)
@@ -148,7 +149,7 @@ void overlay_draw(float w, float h) {
     };
     std::vector<Row> rows;
     float height = 0, width = 0;
-    const int stay = look("fade", 10);
+    const int stay = look("fade", 15);
     for (const Shown &s : g_shown) {
         const float age = (float)(now - s.at);
         const float a = stay <= 0 ? 1.f : std::clamp(std::min(age / .15f, ((float)stay + 1.f - age) / 1.f), 0.f, 1.f);
@@ -209,7 +210,7 @@ float bubble_scale() {
 }
 void bubble_reset() {
     load();
-    g_bx = HOME_X, g_by = HOME_Y, g_bs = 1;
+    g_bx = HOME_X, g_by = HOME_Y, g_bs = HOME_S;
     set_bubble(g_bx, g_by, g_bs);
 }
 

@@ -289,7 +289,7 @@ void chat_page_rows(std::vector<Row>& r) {
                  cs("The size of the lines over the game.", "El tamaño de las líneas sobre el juego."));
         look_row(r, "chat.look.lines", cs("Chat lines", "Líneas del chat"), "lines", 8, 1, 20, 1, "",
                  cs("How many lines show over the game at most.", "Cuántas líneas se ven como máximo sobre el juego."));
-        look_row(r, "chat.look.fade", cs("Fade delay", "Tiempo de desvanecido"), "fade", 10, 0, 60, 1, " s",
+        look_row(r, "chat.look.fade", cs("Fade delay", "Tiempo de desvanecido"), "fade", 15, 0, 60, 1, " s",
                  cs("Seconds a line stays before it fades out. 0: it never fades.", "Segundos que una línea queda antes de desvanecerse. 0: nunca se desvanece."));
         look_row(r, "chat.look.shadowr", cs("Shadow radius", "Radio de la sombra"), "shadowr", 2, 0, 10, 1, "",
                  cs("How soft the shadow around the text is. 0: none but its offset.", "Qué tan suave es la sombra del texto. 0: solo su desplazamiento."));
@@ -320,7 +320,7 @@ void chat_page_rows(std::vector<Row>& r) {
         size.help = cs("The chat button's size.", "El tamaño del botón del chat.");
         size.adjust = [](int d) { chat::bubble_size(std::clamp(g_bubble_pct + d * 4, 34, 112) / 56.f); };
         r.push_back(std::move(size));
-        look_row(r, "chat.look.buttonop", cs("Chat button opacity", "Opacidad del botón del chat"), "buttonop", 100, 10, 100, 5, " %",
+        look_row(r, "chat.look.buttonop", cs("Chat button opacity", "Opacidad del botón del chat"), "buttonop", 80, 10, 100, 5, " %",
                  cs("How faint the chat button and its number are.", "Qué tan tenues son el botón del chat y su número."));
         action(r, "chat.bubble.reset", cs("Chat button back in its place", "Botón del chat a su lugar"), []() { chat::bubble_reset(); });
         r.back().arrow = false;

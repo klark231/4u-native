@@ -102,8 +102,8 @@ void set_overlay(int o);
 bool bubble(float *x, float *y, float *size);  // the chat button's place (fractions) and size (1: its own); false: none saved
 void set_bubble(float x, float y, float size);
 // The overlay's look, whole numbers by key: "textsize" (14), "lines" (8), "shadowr" (2), "shadowx" (1), "shadowy" (1), "bg" (% of
-// black behind the lines, 40), "buttonop" (% of the chat button and its count, 100), "fade" (seconds a line stays before it
-// fades, 0: it never fades, 10). A key never set gives def. reset_look puts them all back.
+// black behind the lines, 40), "buttonop" (% of the chat button and its count, 80), "fade" (seconds a line stays before it
+// fades, 0: it never fades, 15). A key never set gives def. reset_look puts them all back.
 int look(const char *key, int def);
 void set_look(const char *key, int value);
 void reset_look();

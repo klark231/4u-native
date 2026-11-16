@@ -5869,7 +5869,7 @@ void draw_notices() {
     // (the room's lines go by the Chat page's look as the chat over the game does: Chat lines, and Fade delay - 0 keeps
     // them until the menu is opened)
     constexpr double kFade = .6;
-    const int fade_s = chat::look("fade", 10), most = std::clamp(chat::look("lines", 8), 1, 20);
+    const int fade_s = chat::look("fade", 15), most = std::clamp(chat::look("lines", 8), 1, 20);
     const double kShown = fade_s > 0 ? fade_s + kFade : 1e9;
     ImGuiViewport* vp = ImGui::GetMainViewport();
     float y = driver_notice(vp->Pos.y + (perfstats_visible() ? .085f : .015f) * vp->Size.y);
