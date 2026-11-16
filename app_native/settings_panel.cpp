@@ -3021,6 +3021,18 @@ void rows_trad_buttons(std::vector<Row>& r) {
         touch_switch_row(r, std::string("trad.") + c.key, c.title, std::string("trad_show_") + c.key,
                          say("Shows or hides this button of the Traditional layout. It applies at once.",
                              "Muestra u oculta este botón de la disposición tradicional. Se aplica al momento."), true);
+    // (the combined buttons: Adaptive edits them in Buttons on the screen, which Traditional doesn't have; the same list)
+    action(r, "trad.combos", tr("Combined buttons"), []() {
+        s_combos_alone = true;
+        push(View::Buttons, "tc.0");
+    });
+    int set = 0;
+    for (int k = 0; k < 6; k++) set += !s.draft.combo[k].empty();
+    r.back().value = std::to_string(set) + " / 6";
+    r.back().help = say("Buttons of your own that press several of the game's at once (A+X, say). Each shows on the screen once "
+                        "it has buttons; place it with Customize controls and HUD.",
+                        "Botones propios que aprietan varios del juego a la vez (A+X, por ejemplo). Cada uno se ve en la "
+                        "pantalla cuando tiene botones; colócalo con Personalizar controles y HUD.");
 }
 void reset_trad_buttons() {
     for (const TradControl& c : TRAD_CONTROLS) touch_set_setting(std::string("trad_show_") + c.key, "1");
@@ -4068,8 +4080,9 @@ std::vector<Row> rows_for_view(bool* open) {
                 push(View::ComboEdit, "ce.0");
             });
             r.back().value = s.draft.combo[k].empty() ? tr("Empty") : s.draft.combo[k];
-            r.back().help = s_combos_alone ? tr("A button of your own presses several of the game's together (A+X, say). Give it a controller's button here.")
-                                           : tr("A button of your own presses several of the game's together (A+X, say). Place it with Customize controls and HUD.");
+            r.back().help = s_combos_alone && !touch_traditional()
+                                ? tr("A button of your own presses several of the game's together (A+X, say). Give it a controller's button here.")
+                                : tr("A button of your own presses several of the game's together (A+X, say). Place it with Customize controls and HUD.");
         }
         action(r, "tb.back", tr("Back"), []() { pop(); });
         r.back().arrow = false;
@@ -5136,14 +5149,10 @@ struct SheetChat {
     int channel;
     std::string peer;
 };
-// The chats the sheet's chat button goes through: Mixed (while it is on), the room's, General, Global, each friend
+// The chats the sheet's chat button goes through, in the page's order (chat_order), then each friend
 std::vector<SheetChat> sheet_chats() {
     std::vector<SheetChat> v;
-    if (chat::bridged()) v.push_back({chat::MIXED, ""}), v.push_back({chat::MIXED_ALL, ""});
-    v.push_back({chat::HUB, ""});
-    v.push_back({chat::HUBCHAT, ""});
-    v.push_back({chat::GENERAL, ""});
-    v.push_back({chat::GLOBAL, ""});
+    for (int c : chat_order()) v.push_back({c, ""});
     for (const chat::Person& p : chat::people())
         if (p.is_friend) v.push_back({chat::FRIEND, p.id});
     return v;
@@ -5160,6 +5169,7 @@ bool g_sheet_open = false;
 std::string g_sheet_seen;                 // (what the sheet shows now: it is given the lines again when this changes)
 std::optional<chat::Line> g_join_after;   // (a line with a room in it was tapped: the menu opens on the join page)
 void open_chat_sheet() {
+    restore_chat();
     if (g_chat < 0 || ((g_chat == chat::MIXED || g_chat == chat::MIXED_ALL) && !chat::bridged()))
         g_chat = chat::bridged() ? chat::MIXED : chat::hub_chat() && chat::hub_up() ? chat::HUB : chat::GLOBAL;
     g_sheet_open = true;
@@ -5183,7 +5193,7 @@ void chat_sheet_frame() {
         for (size_t i = 0; i < chats.size(); i++)
             if (chats[i].channel == g_chat && chats[i].peer == g_chat_peer) at = i;
         const SheetChat& next = chats[(at + 1) % chats.size()];
-        g_chat = next.channel, g_chat_peer = next.peer;
+        pick_chat(next.channel, next.peer);
         app_chat_sheet_error("");
         g_sheet_seen.clear();
     }

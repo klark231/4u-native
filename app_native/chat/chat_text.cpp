@@ -92,8 +92,8 @@ std::string who(const Line &l) {
 
 std::string channel_name(int channel) {
     switch (channel) {
-    case MIXED: return t("Mixed (Room + Hub)", "Mixto (Sala + Hub)");
-    case MIXED_ALL: return t("Mixed (All)", "Mixto (Todos)");
+    case MIXED: return t("Room + Hub", "Sala + Hub");
+    case MIXED_ALL: return t("Room + Hub + Global", "Sala + Hub + Global");
     case HUBCHAT: return t("Hub", "Hub");
     case GLOBAL: return t("Global", "Global");
     case GENERAL: return std::string(t("General", "General")) + " (" + game_title(game()) + ")";

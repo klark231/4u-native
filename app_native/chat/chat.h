@@ -33,7 +33,9 @@ namespace chat {
 enum Channel { GLOBAL, GENERAL, HUB, HUBCHAT, FRIEND, CHANNELS };  // (HUB: the room's chat; HUBCHAT: the chat of the hub this device is in)
 enum Status { OFF, CONNECTING, ONLINE, NO_RELAY, UNAVAILABLE };
 enum Share { SHARE_NONE, SHARE_KEY, SHARE_ROOM };  // MHGU: hub server + matchmaking key; MH4U: room address + password
-enum Overlay { OVERLAY_OFF, OVERLAY_HUB_FRIENDS, OVERLAY_ALL };
+// Which lines show over the game: none, the room's and the friends', all, or those of the chat picked in the menu or the
+// chat button's dialog (chosen(); the default)
+enum Overlay { OVERLAY_OFF, OVERLAY_HUB_FRIENDS, OVERLAY_ALL, OVERLAY_CHAT };
 // Views of the chat, not chats of their own (nothing is kept under them), while Play online with is Mixed (Port::bridge):
 // MIXED is the room's lines and the hub's in one list, and a line said goes to both; MIXED_ALL adds Global to them (what is
 // said there is not passed on to the others: only said, and read). lines(), unread(), mark_read() and say() take them.
@@ -99,6 +101,12 @@ std::vector<std::string> default_relays();
 void set_relays(const std::vector<std::string> &list);  // empty: the default ones
 int overlay();                    // Overlay: which lines show over the game
 void set_overlay(int o);
+// The chat picked last (a Channel, MIXED or MIXED_ALL, and the friend's key for FRIEND), kept in chat.txt so it is the one
+// shown again after a restart, and the one whose lines show over the game (OVERLAY_CHAT). false: none picked yet
+bool chosen(int *channel, std::string *peer);
+void set_chosen(int channel, const std::string &peer);
+// Whether a line belongs to a chat as chosen() names it (MIXED: the room's and the hub's; MIXED_ALL: and Global's)
+bool in_chat(const Line &line, int channel, const std::string &peer);
 bool bubble(float *x, float *y, float *size);  // the chat button's place (fractions) and size (1: its own); false: none saved
 void set_bubble(float x, float y, float size);
 // The overlay's look, whole numbers by key: "textsize" (14), "lines" (8), "shadowr" (2), "shadowx" (1), "shadowy" (1), "bg" (% of

@@ -6,9 +6,30 @@
 // The chat's settings are its own (chat.txt beside mh4u-app.ini), applied at once: Save and leaving without it leave them
 // (but Room messages over the game, [Network] Notices, as before). Its texts carry their Spanish beside them.
 
-int g_chat = -1;  // the chat the page and the sheet show (FRIEND: with g_chat_peer, a friend's key); -1: not picked yet (the room's
-                  // while in one, else Global)
+int g_chat = -1;  // the chat the page and the sheet show (FRIEND: with g_chat_peer, a friend's key); -1: not picked yet (the one
+                  // picked last, chat.txt; else the room's while in one, else Global)
 std::string g_chat_peer;
+// The chat picked last, the first time the page or the sheet shows (the checks after it put it right if it is gone: Mixed
+// ended, a friend removed; the one kept stays)
+void restore_chat() {
+    if (g_chat >= 0) return;
+    int c;
+    std::string peer;
+    if (chat::chosen(&c, &peer)) g_chat = c, g_chat_peer = peer;
+}
+// A chat the player picked (the page's list, the sheet's button): kept, so it is the one shown after a restart and the one
+// whose lines show over the game (Lines over the game: The chat picked)
+void pick_chat(int channel, const std::string& peer) {
+    g_chat = channel, g_chat_peer = peer;
+    chat::set_chosen(channel, peer);
+}
+// The order the chats are offered in, in the page's list and on the sheet's button alike: the room's and the hub's, the
+// online ones, the views of several at once (while Play online with is Mixed), then each friend
+std::vector<int> chat_order() {
+    std::vector<int> v = {chat::HUB, chat::HUBCHAT, chat::GENERAL, chat::GLOBAL};
+    if (chat::bridged()) v.push_back(chat::MIXED), v.push_back(chat::MIXED_ALL);
+    return v;
+}
 const char* cs(const char* en, const char* es) {
     chat::set_spanish(spanish());
     return chat::t(en, es);
@@ -48,7 +69,7 @@ void chat_turn_on() {
     push(View::ChatOn, "dialog.cancel");
 }
 void chat_open(int channel, const std::string& peer) {
-    g_chat = channel, g_chat_peer = peer;
+    pick_chat(channel, peer);
     open_chat_sheet();
 }
 // A room shared in the chat: where to (the room's own players are already in it: friends online, General, Global)
@@ -186,6 +207,7 @@ int g_bubble_pct = -1;
 void chat_page_rows(std::vector<Row>& r) {
     cs("", "");  // (the language)
     std::vector<chat::Person> people = chat::people();
+    restore_chat();
     if (g_chat < 0) g_chat = chat::bridged() ? chat::MIXED : chat::hub_chat() && chat::hub_up() ? chat::HUB : chat::GLOBAL;
     if ((g_chat == chat::MIXED || g_chat == chat::MIXED_ALL) && !chat::bridged())
         g_chat = chat::hub_chat() && chat::hub_up() ? chat::HUB : chat::GLOBAL;  // (Mixed ended)
@@ -206,10 +228,7 @@ void chat_page_rows(std::vector<Row>& r) {
         std::vector<std::string> names;
         std::vector<std::pair<int, std::string>> to;
         int at = 0;
-        std::vector<int> order;
-        if (chat::bridged()) order = {chat::MIXED, chat::MIXED_ALL};  // (Play online with is Mixed: the chats as one, first)
-        for (int c : {chat::HUB, chat::HUBCHAT, chat::GENERAL, chat::GLOBAL}) order.push_back(c);
-        for (int c : order) {
+        for (int c : chat_order()) {
             int n = chat::unread(c);
             names.push_back(chat::channel_name(c) + (n ? " (" + std::to_string(n) + ")" : std::string()));
             to.push_back({c, ""});
@@ -223,7 +242,7 @@ void chat_page_rows(std::vector<Row>& r) {
                 if (g_chat == chat::FRIEND && g_chat_peer == p.id) at = (int)to.size() - 1;
             }
         add_choice(r, "chat.channel", cs("Chat", "Chat"), at, names, [to](int i) {
-            if (i >= 0 && i < (int)to.size()) g_chat = to[i].first, g_chat_peer = to[i].second;
+            if (i >= 0 && i < (int)to.size()) pick_chat(to[i].first, to[i].second);
         });
         r.back().help = chat::channel_help(g_chat);
     }
@@ -279,10 +298,19 @@ void chat_page_rows(std::vector<Row>& r) {
         r.back().value = std::to_string(on) + " " + cs("online", "en línea");
     }
     header(r, "chat.options", cs("Options", "Opciones"));
-    add_choice(r, "chat.overlay", cs("Lines over the game", "Líneas sobre el juego"), chat::overlay(), {cs("Off", "Apagado"), cs("Room and friends", "Sala y amigos"), cs("All", "Todos")},
-               [](int i) { chat::set_overlay(i); });
-    r.back().help = cs("New lines show over the game, top left, and fade out after the fade delay.",
-                       "Las líneas nuevas se ven sobre el juego, arriba a la izquierda, y se desvanecen tras el tiempo de desvanecido.");
+    {  // (shown in this order; chat::Overlay keeps its numbers, as chat.txt has them)
+        static const int kOverlay[] = {chat::OVERLAY_OFF, chat::OVERLAY_CHAT, chat::OVERLAY_HUB_FRIENDS, chat::OVERLAY_ALL};
+        int at = 1;
+        for (int i = 0; i < 4; i++)
+            if (kOverlay[i] == chat::overlay()) at = i;
+        add_choice(r, "chat.overlay", cs("Lines over the game", "Líneas sobre el juego"), at,
+                   {cs("Off", "Apagado"), cs("The chat picked", "El chat elegido"), cs("Room and friends", "Sala y amigos"), cs("All", "Todos")},
+                   [](int i) { chat::set_overlay(kOverlay[std::clamp(i, 0, 3)]); });
+        r.back().help = cs("New lines show over the game, top left, and fade out after the fade delay. The chat picked: only "
+                           "the lines of the chat chosen above (or in the chat button's dialog).",
+                           "Las líneas nuevas se ven sobre el juego, arriba a la izquierda, y se desvanecen tras el tiempo de "
+                           "desvanecido. El chat elegido: solo las del chat elegido arriba (o en el diálogo del botón del chat).");
+    }
     add_bool(r, "net.notices", "Room messages over the game", &s.draft.notices, "Notices");
     {  // the lines' look (AzaharPlus's and CitraMMJ's chat overlay settings), at once
         look_row(r, "chat.look.textsize", cs("Chat text size", "Tamaño del texto del chat"), "textsize", 14, 8, 40, 1, "",

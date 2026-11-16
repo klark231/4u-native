@@ -51,8 +51,19 @@ bool wanted() {  // (the online chat on, or the hub's chat on and a hub up)
     return false;
 #endif
 }
-bool counts(int channel) {
+// The chat picked (OVERLAY_CHAT); none picked yet: the room's and the hub's
+void picked(int *channel, std::string *peer) {
+    if (!chosen(channel, peer)) *channel = bridged() ? MIXED : HUB, peer->clear();
+}
+bool counts(const Line &l) {
     int o = overlay();
+    if (o == OVERLAY_CHAT) {  // (only that chat's lines, nothing else of the relays')
+        int c;
+        std::string peer;
+        picked(&c, &peer);
+        return in_chat(l, c, peer);
+    }
+    const int channel = l.channel;
     if (o != OVERLAY_OFF && bridged() && (channel == HUB || channel == HUBCHAT)) return true;  // (Mixed: the room's and the hub's)
     return o == OVERLAY_ALL || (o == OVERLAY_HUB_FRIENDS && (channel == HUB || channel == HUBCHAT || channel == FRIEND));
 }
@@ -72,7 +83,7 @@ bool overlay_frame() {
     const bool menu = menu_open();
     if (last != g_seen_serial) {
         for (const Line &l : since(g_seen_serial))
-            if (counts(l.channel) && !menu) g_shown.push_back({l, now});  // (yours too: as "You")
+            if (counts(l) && !menu) g_shown.push_back({l, now});  // (yours too: as "You")
         g_seen_serial = last;
         const size_t most = (size_t)std::clamp(look("lines", 8), 1, 20);
         if (g_shown.size() > most) g_shown.erase(g_shown.begin(), g_shown.end() - (long)most);
@@ -126,8 +137,18 @@ void overlay_draw(float w, float h) {
             dl->AddRectFilled(ImVec2(a.x + bw * .16f, ly), ImVec2(b.x - bw * (i == 2 ? .42f : .16f), ly + bh * .1f), faded(ink, op), bh * .05f);
         }
         int unread = 0;
-        for (int c = 0; c < CHANNELS; c++)
-            if (counts(c) || c == FRIEND) unread += chat::unread(c);
+        if (overlay() == OVERLAY_CHAT) {  // (the chat picked, and friends' private lines, which always count)
+            int c;
+            std::string peer;
+            picked(&c, &peer);
+            unread = c == FRIEND ? chat::unread(FRIEND) : chat::unread(c, peer) + chat::unread(FRIEND);
+        } else {
+            for (int c = 0; c < CHANNELS; c++) {
+                Line probe;
+                probe.channel = c;
+                if (counts(probe) || c == FRIEND) unread += chat::unread(c);
+            }
+        }
         if (unread) {
             char n[8];
             snprintf(n, sizeof n, "%d", std::min(unread, 99));

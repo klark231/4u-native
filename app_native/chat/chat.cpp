@@ -107,7 +107,9 @@ struct State {
     std::atomic<bool> hub_on{false}, any_on{false};  // (hub, and hub || enabled, read without the lock: hub_chat(), active())
     std::string name;
     std::vector<std::string> relays;
-    int overlay = OVERLAY_HUB_FRIENDS;
+    int overlay = OVERLAY_CHAT;
+    int chosen = -1;            // the chat picked last (chat.h chosen()), -1: none yet
+    std::string chosen_peer;
     std::map<std::string, int> look;  // the overlay's look: text size, lines, shadow, background, button, fade (chat.h look())
     std::set<std::string> flags;
     float bx = 0, by = 0, bsize = 1;
@@ -164,7 +166,9 @@ void save_locked() {
     fprintf(f, "# The chat's own file (this device only, never sent anywhere): its key, its settings, friends, mutes and blocks.\n"
                "# The key is your identity in the chat (your friend code comes from it): keep it to yourself.\n");
     fprintf(f, "secret\t%s\n", chatc::hex(g.sec, 32).c_str());
-    fprintf(f, "enabled\t%d\nhub\t%d\nnotice\t%d\noverlay\t%d\n", (int)g.enabled, (int)g.hub, (int)g.notice, g.overlay);
+    // ("overlaymode", not "overlay": the files of before, with only the first three, start on the chat picked)
+    fprintf(f, "enabled\t%d\nhub\t%d\nnotice\t%d\noverlaymode\t%d\n", (int)g.enabled, (int)g.hub, (int)g.notice, g.overlay);
+    if (g.chosen >= 0) fprintf(f, "chosen\t%d\t%s\n", g.chosen, g.chosen_peer.c_str());
     fprintf(f, "name\t%s\n", g.name.c_str());
     std::string rl;
     for (auto &r : g.relays) rl += (rl.empty() ? "" : " ") + r;
@@ -226,7 +230,8 @@ void load_locked() {
             else if (k == "enabled") g.enabled = v == "1";
             else if (k == "hub") g.hub = v == "1", have_hub = true;
             else if (k == "notice") g.notice = v == "1";
-            else if (k == "overlay") g.overlay = std::clamp(atoi(v.c_str()), 0, 2);
+            else if (k == "overlaymode") g.overlay = std::clamp(atoi(v.c_str()), 0, (int)OVERLAY_CHAT);
+            else if (k == "chosen" && !v.empty()) g.chosen = atoi(v.c_str()), g.chosen_peer = p.size() > 2 ? p[2] : "";
             else if (k == "look") {
                 if (p.size() > 2 && !v.empty()) g.look[v] = atoi(p[2].c_str());
             } else if (k == "name") g.name = clean(v, MAX_NAME);
@@ -836,8 +841,28 @@ void set_relays(const std::vector<std::string> &list) {
 int overlay() { std::lock_guard<std::mutex> l(g.mu); return g.overlay; }
 void set_overlay(int o) {
     std::lock_guard<std::mutex> l(g.mu);
-    g.overlay = std::clamp(o, 0, 2);
+    g.overlay = std::clamp(o, 0, (int)OVERLAY_CHAT);
     save_locked();
+}
+bool chosen(int *channel, std::string *peer) {
+    std::lock_guard<std::mutex> l(g.mu);
+    if (g.chosen < 0) return false;
+    *channel = g.chosen, *peer = g.chosen_peer;
+    return true;
+}
+void set_chosen(int channel, const std::string &peer) {
+    std::lock_guard<std::mutex> l(g.mu);
+    if (g.chosen == channel && g.chosen_peer == peer) return;
+    g.chosen = channel, g.chosen_peer = channel == FRIEND ? peer : "";
+    save_locked();
+}
+bool in_chat(const Line &line, int channel, const std::string &peer) {
+    switch (channel) {
+    case MIXED: return line.channel == HUB || line.channel == HUBCHAT;
+    case MIXED_ALL: return line.channel == HUB || line.channel == HUBCHAT || line.channel == GLOBAL;
+    case FRIEND: return line.channel == FRIEND && line.peer == peer;
+    default: return line.channel == channel;
+    }
 }
 bool bubble(float *x, float *y, float *size) {
     std::lock_guard<std::mutex> l(g.mu);

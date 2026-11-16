@@ -549,9 +549,12 @@ struct Layout {
 };
 // The emulator-style layout's own places for the controls both kinds have (DEFS has the port's): the stick a little
 // higher, over the d-pad; the settings, touch screen and town buttons in their column at the left edge, lower; the
-// Lock-on button above the diamond. The MHGU port's the same where it has them
+// Lock-on button above the diamond; the combined buttons in two columns left of the diamond, clear of the stick (the
+// port's places for them are where this layout's stick reaches). The MHGU port's the same where it has them
 const struct { int c; float x, y; } EMU_PLACES[] = {{C_STICK, .27f, .42f}, {C_SETTINGS, .065f, .64f}, {C_LOCKON, .45f, .58f},
-                                                    {C_SCREEN, .065f, .50f}, {C_TOWN, .065f, .36f}};
+                                                    {C_SCREEN, .065f, .50f}, {C_TOWN, .065f, .36f},
+                                                    {C_COMBO, .50f, .30f},     {C_COMBO + 1, .50f, .44f}, {C_COMBO + 2, .50f, .58f},
+                                                    {C_COMBO + 3, .58f, .30f}, {C_COMBO + 4, .58f, .44f}, {C_COMBO + 5, .58f, .58f}};
 void def_place(int kind, int i, float *x, float *y) {
     *x = DEFS[i].x, *y = DEFS[i].y;
     if (kind == KIND_EMU)
