@@ -3,6 +3,8 @@ package com.mh4u.port;
 import android.app.Activity;
 import android.app.Dialog;
 import android.graphics.Color;
+import android.os.Handler;
+import android.os.Looper;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.text.InputType;
@@ -332,8 +334,8 @@ final class ChatSheet {
         final Dialog d = dialog;
         if (d == null) return;
         dialog = null;
-        Activity a = (Activity) d.getContext();
-        a.runOnUiThread(new Runnable() {
+        // (on the main thread, from wherever it is called: a dialog's context is a theme wrapper, not the activity)
+        new Handler(Looper.getMainLooper()).post(new Runnable() {
             @Override
             public void run() {
                 try {
