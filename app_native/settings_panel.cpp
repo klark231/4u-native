@@ -30,6 +30,7 @@
 #include <strings.h>
 
 #include <algorithm>
+#include <ctime>
 #include <atomic>
 #include <cmath>
 #include <cstdarg>
@@ -1988,6 +1989,20 @@ void reset_search_hosts() {
     app_settings_save();
 }
 MENU_ENTRY("multiplayer", 13, rows_search_hosts, reset_search_hosts);
+// Host port, as MHGU's Network tab has it under Local play and hubs: the UDP port a room hosted on this phone listens on
+// (the same setting as Host a room's Port). Hub servers have theirs in each server's address (39510 if none is typed).
+void rows_host_port(std::vector<Row>& r) {
+    Draft& c = s.draft;
+    add_text(r, "net.hostport", "Host port (UDP)", &c.host_port, KB_DIGITS, 5, "HostPort", c.host_port,
+             tr("1 to 65535; rooms use 24872."), check_port);
+    r.back().help = say("The UDP port a room hosted on this phone listens on (24872 unless something else uses it; from the "
+                        "internet, forward it on your router). Hub servers don't use it: each has its port in its address "
+                        "(39510 if none is typed), in Internet hubs.",
+                        "El puerto UDP en el que escucha una sala abierta en este teléfono (24872 salvo que otra cosa lo use; "
+                        "desde internet, redirígelo en tu router). Los servidores de hubs no lo usan: cada uno lleva su puerto "
+                        "en su dirección (39510 si no se escribe), en Hubs por internet.");
+}
+MENU_ENTRY("multiplayer", 12, rows_host_port);
 MENU_PAGE("multiplayer/hubs", "Internet hubs", "multiplayer", 14, uses_hubs, [](Row& r) {
     r.value = hubs_summary();
     r.help = say("Hubs over the internet through a hub server: the servers, the matchmaking key, and a check that they answer.",
@@ -5204,6 +5219,14 @@ void chat_sheet_frame() {
         snapshot += kind;
         snapshot += '\x1f' + sheet_field(chat::who(l)) + '\x1f' + sheet_field(chat::line_text(l)) + '\x1f';
         if (l.share == chat::SHARE_ROOM && !l.mine) snapshot += std::to_string(l.serial);
+        // its time, in the phone's own (HH:MM; empty for a line with none)
+        snapshot += '\x1f';
+        if (l.at > 0) {
+            const time_t at = static_cast<time_t>(l.at);
+            struct tm local {};
+            char hhmm[8];
+            if (localtime_r(&at, &local) && strftime(hhmm, sizeof hhmm, "%H:%M", &local)) snapshot += hhmm;
+        }
     }
     app_chat_sheet_update(sheet_chat_name(g_chat, g_chat_peer), snapshot,
                           can ? cs("Type message...", "Escribe un mensaje...")

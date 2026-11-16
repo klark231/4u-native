@@ -350,6 +350,7 @@ static inline const char* settings_text(int language, const char* english) {
         {"Join the room", "Entrar a la sala"},
         {"Host a room on this phone", "Crear una sala en este teléfono"},
         {"Port (UDP)", "Puerto (UDP)"},
+        {"Host port (UDP)", "Puerto del anfitrión (UDP)"},
         {"1 to 65535; rooms use 24872.", "De 1 a 65535; las salas usan el 24872."},
         {"Hunters", "Cazadores"},
         {"Close the room", "Cerrar la sala"},

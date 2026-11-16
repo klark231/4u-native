@@ -3,9 +3,16 @@ package com.mh4u.port;
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ColorFilter;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
@@ -54,6 +61,59 @@ final class Look {
         d.setStroke(dp(c, 2), EDGE);
         d.setCornerRadius(dp(c, radius));
         return d;
+    }
+
+    /**
+     * The menu's square frame: a fill, a bronze edge and a small gold diamond on each corner, as the settings' buttons and
+     * the chat's have them. Square, never rounded.
+     */
+    static Drawable frame(Context c, int fill) { return new Frame(fill, dp(c, 1), dp(c, 3)); }
+
+    private static final class Frame extends Drawable {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path diamond = new Path();
+        private final int fill, line, tip;
+
+        Frame(int fill, int line, int tip) {
+            this.fill = fill;
+            this.line = Math.max(1, line);
+            this.tip = Math.max(2, tip);
+        }
+
+        @Override
+        public void draw(Canvas canvas) {
+            Rect b = getBounds();
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(fill);
+            canvas.drawRect(b.left + tip / 2f, b.top + tip / 2f, b.right - tip / 2f, b.bottom - tip / 2f, paint);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(line);
+            paint.setColor(EDGE);
+            float in = tip / 2f + line / 2f;
+            canvas.drawRect(b.left + in, b.top + in, b.right - in, b.bottom - in, paint);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(GOLD);
+            float[][] corners = {{b.left + in, b.top + in}, {b.right - in, b.top + in}, {b.left + in, b.bottom - in},
+                                 {b.right - in, b.bottom - in}};
+            for (float[] p : corners) {
+                diamond.reset();
+                diamond.moveTo(p[0], p[1] - tip);
+                diamond.lineTo(p[0] + tip, p[1]);
+                diamond.lineTo(p[0], p[1] + tip);
+                diamond.lineTo(p[0] - tip, p[1]);
+                diamond.close();
+                canvas.drawPath(diamond, paint);
+            }
+        }
+
+        @Override
+        public void setAlpha(int alpha) {}
+
+        @Override
+        public void setColorFilter(ColorFilter cf) {}
+
+        @Override
+        public int getOpacity() { return PixelFormat.TRANSLUCENT; }
     }
 
     static Button button(Context c, String s, boolean main) {
